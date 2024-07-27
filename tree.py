@@ -7,14 +7,20 @@ from typing import List, Optional
 
 # source for binary tree enumeration: https://algo.monster/liteproblems/894
 
-# https://stackoverflow.com/questions/28284257/circular-cross-correlation-python
-# TODO verify that this is the right composition function
-def compose(x, y):
-    """Periodic correlation, implemented using the FFT.
-
-    x and y must be real sequences with the same length.
+def compose(v_func, v_arg, method="keep_functor"):
     """
-    return torch.Tensor(ifft(fft(x) * fft(y).conj()).real)
+    Compose functor and argument vectors.
+    """
+    v_out = None
+    if method == "keep_functor":
+        v_out = v_func
+    elif method == "holographic":
+        # https://stackoverflow.com/questions/28284257/circular-cross-correlation-python
+        # TODO verify that this is the right thing for holographic composition
+        v_out = torch.Tensor(ifft(fft(v_func) * fft(v_arg).conj()).real)
+    else:
+        raise NotImplementedError("composition method not implemented: " + method)
+    return v_out
 
 
 class TreeNode:
@@ -126,7 +132,6 @@ class Tree:
 
     def _annotate_vectors(self, vectors):
         for leaf in self.leaves:
-            print("vec", vectors[leaf.val])
             leaf.vector = vectors[leaf.val]
         Tree._annotate_node_vector(self.root)
 
