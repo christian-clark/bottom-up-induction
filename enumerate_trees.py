@@ -7,15 +7,6 @@ from typing import List, Optional
 
 # source for binary tree enumeration: https://algo.monster/liteproblems/894
 
-SENT_LEN = int(sys.argv[1])
-VECTOR_DIM = 4
-# TODO learn these probabilities
-OP_A_ROLE_1_LEFT_PROB = 0.33
-OP_A_ROLE_2_LEFT_PROB = 0.8
-
-# bigger values will be extremely time-consuming to enumerate!
-assert SENT_LEN <= 6
-
 # https://stackoverflow.com/questions/28284257/circular-cross-correlation-python
 # TODO verify that this is the right composition function
 def periodic_corr(x, y):
@@ -277,81 +268,85 @@ class Tree:
         return rep[:-1]
 
 
-def buildFBT(total_nodes: int) -> List[Optional[TreeNode]]:
+def full_binary_trees(total_nodes: int) -> List[Optional[TreeNode]]:
     # If there is only one node, return list containing a single TreeNode.
     if total_nodes == 1:
         return [TreeNode()]
   
     # List to store all unique FBTs created from 'total_nodes' nodes.
-    full_binary_trees = []
+    fbts = []
   
     # Iterate over the number of nodes left after one is taken as the current root.
     for nodes_in_left_subtree in range(total_nodes - 1):
         nodes_in_right_subtree = total_nodes - 1 - nodes_in_left_subtree
       
         # Generate all full binary trees for the number of nodes in left subtree.
-        left_subtrees = buildFBT(nodes_in_left_subtree)
+        left_subtrees = full_binary_trees(nodes_in_left_subtree)
         # Generate all full binary trees for the number of nodes in right subtree.
-        right_subtrees = buildFBT(nodes_in_right_subtree)
+        right_subtrees = full_binary_trees(nodes_in_right_subtree)
 
         # Combine each left subtree with each right subtree and add the current node as root.
         for left in left_subtrees:
             for right in right_subtrees:
-                full_binary_trees.append(TreeNode("x", left, right))
+                fbts.append(TreeNode("x", left, right))
   
     # Return the list of all unique full binary trees.
-    return full_binary_trees
+    return fbts
 
 
-# generate random vectors
-vectors = list()
-for i in range(SENT_LEN):
-    v = list()
-    for j in range(VECTOR_DIM):
-        r = random.random()
-        # scale between -1 and 1
-        #r = r*2 - 1
-        v.append(r)
-    vectors.append(np.array(v))
+if __name__ == "__main__":
+    SENT_LEN = int(sys.argv[1])
+    VECTOR_DIM = 4
+    # TODO learn these probabilities
+    OP_A_ROLE_1_LEFT_PROB = 0.33
+    OP_A_ROLE_2_LEFT_PROB = 0.8
 
-# generate random operation probabilities
-# TODO take role into account (A1 and A2 should be different ops)
-prob_l_func = random.random()
-prob_r_func = 1 - prob_l_func
+    # bigger values will be extremely time-consuming to enumerate!
+    assert SENT_LEN <= 6
 
-#print(opA_prob(vectors[0], vectors[1]))
-# iterate through possible trees
+    # generate random vectors
+    vectors = list()
+    for i in range(SENT_LEN):
+        v = list()
+        for j in range(VECTOR_DIM):
+            r = random.random()
+            # scale between -1 and 1
+            #r = r*2 - 1
+            v.append(r)
+        vectors.append(np.array(v))
 
-np.set_printoptions(formatter={'float': '{:0.2f}'.format})
-raw_trees = buildFBT(2*SENT_LEN - 1)
-trees = list()
-tree_count = 0
-total_score = 0
-for r in raw_trees:
-    ps = perm(range(SENT_LEN))
-    for p in ps:
-        rcurr = deepcopy(r)
-        rcurr.set_leaf_nodes(list(p))
-        #print(r)
-        t = Tree(rcurr, vectors)
-        trees.append(t)
-        total_score += t.unnormalized_score()
-        tree_count += 1
-        #print(t)
-        #print("combined score:", tr.unnormalized_score())
-        #print("leaves:", tr.leaves)
-        #print("nonterminals:", tr.nonterminals)
-        #print("============")
-#print("TOTAL TREES:", tree_count)
-for t in sorted(trees, key=lambda t:t.unnormalized_score()):
-    print(t.root)
-    print(t)
-    print("probability:", t.unnormalized_score()/total_score)
-    print("============")
-print("TOTAL TREES:", tree_count)
-#trees = buildFBT(7)
-#t = trees[0]
-#print(t)
-#set_leaf_nodes(t, [5, 6, 7, 8])
-#set_leaf_nodes(t, [4, 6, 2, 4])
-#print(t)
+    # generate random operation probabilities
+    # TODO take role into account (A1 and A2 should be different ops)
+    prob_l_func = random.random()
+    prob_r_func = 1 - prob_l_func
+
+    #print(opA_prob(vectors[0], vectors[1]))
+    # iterate through possible trees
+
+    np.set_printoptions(formatter={'float': '{:0.2f}'.format})
+    raw_trees = full_binary_trees(2*SENT_LEN - 1)
+    trees = list()
+    tree_count = 0
+    total_score = 0
+    for r in raw_trees:
+        ps = perm(range(SENT_LEN))
+        for p in ps:
+            rcurr = deepcopy(r)
+            rcurr.set_leaf_nodes(list(p))
+            t = Tree(rcurr, vectors)
+            trees.append(t)
+            total_score += t.unnormalized_score()
+            tree_count += 1
+
+    for t in sorted(trees, key=lambda t:t.unnormalized_score()):
+        print(t.root)
+        print(t)
+        print("probability:", t.unnormalized_score()/total_score)
+        print("============")
+    print("TOTAL TREES:", tree_count)
+    #trees = full_binary_trees(7)
+    #t = trees[0]
+    #print(t)
+    #set_leaf_nodes(t, [5, 6, 7, 8])
+    #set_leaf_nodes(t, [4, 6, 2, 4])
+    #print(t)
