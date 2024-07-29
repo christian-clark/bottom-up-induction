@@ -23,14 +23,10 @@ def enumerate_trees(x):
             yield t
 
 
-#x = torch.Tensor([
-#    [1, 0.5, 0],
-#    [0.5, 1, 0.5],
-#    [0, 0.5, 1]
-#])
 def hacky_operation_mlp(func_and_arg):
     """
     non-learnable operation mlp for proof-of-concept system
+    in test_inducer.py
     input dim: trees x nonterminals x (2*dvec)
     output dim: trees x nonterminals x 2
     """
@@ -62,23 +58,24 @@ class Inducer(nn.Module):
         # - output: probability of functor on left given composition operation
         self.ordering_mlp = nn.Linear(2, 1)
 
-    def forward(self, x):
+    def forward(self, x, print_trees=False):
         """x is an n x d vector containing the d-dimensional vectors for a
         sentence of length n"""
         nonterminals = list()
         valid = list()
         ix = 0
         for t in enumerate_trees(x):
-            print("================ TREE {} ================".format(ix))
-            print(t.root)
-            print(t)
+            if print_trees:
+                print("================ TREE {} ================".format(ix))
+                print(t.root)
+                print(t)
+                print()
             nonterminals.append(t.nonterminals)
             if not t.root.separable or t.max_func_chain > MAX_ROLE:
                 valid.append(0)
             else:
                 valid.append(1)
             ix += 1
-            print()
 
         func_vecs = list()
         arg_vecs = list()
@@ -145,6 +142,8 @@ class Inducer(nn.Module):
         word_order_probs = observed_order_probs.prod(dim=1) * valid
 
         combined_probs = pred_tree_probs * word_order_probs
-        print("combined_probs:")
-        print(combined_probs)
+        #print("combined_probs:")
+        #print(combined_probs)
+        loss = -1 * torch.log(combined_probs.sum())
+        return loss, combined_probs
 
