@@ -23,7 +23,7 @@ def enumerate_trees(x):
             yield t
 
 
-def hacky_operation_mlp(func_and_arg):
+def hacky_operation_model(func_and_arg):
     """
     non-learnable operation mlp for proof-of-concept system
     in test_inducer.py
@@ -44,21 +44,26 @@ def hacky_operation_mlp(func_and_arg):
     
 
 class Inducer(nn.Module):
-    def __init__(self, vector_dim):
+    def __init__(self, vector_dim, operation_model_type="mlp"):
         super(Inducer, self).__init__()
         self.d = vector_dim
         # operation probabilities
         # - input: functor and argument vectors (dim: 2*d)
         # - output: probability for each possible composition operation
         #     (each value between 0 and 1)
-        #self.operation_mlp = nn.Linear(2*self.d, 2)
-        self.operation_mlp = hacky_operation_mlp
+        self.operation_model_type = operation_model_type
+        if self.operation_model_type == "mlp":
+            self.operation_model = nn.Linear(2*self.d, 2)
+        elif self.operation_model_type == "hacky":
+            self.operation_model = hacky_operation_model
+        else:
+            raise NotImplementedError()
         # ordering probabilities
         # - input: one-hot composition operation (dim: omega, hardcoded as 2)
         # - output: probability of functor on left given composition operation
         self.ordering_mlp = nn.Linear(2, 1)
 
-    def forward(self, x, print_trees=False):
+    def forward(self, x, print_trees=False, verbose=False):
         """x is an n x d vector containing the d-dimensional vectors for a
         sentence of length n"""
         nonterminals = list()
@@ -125,13 +130,25 @@ class Inducer(nn.Module):
         directions = torch.stack(directions, dim=0).unsqueeze(dim=-1)
 
         op_input = torch.cat([func_vecs, arg_vecs], dim=2)
-        #op_scores = self.operation_mlp(op_input)
-        #op_probs = torch.sigmoid(op_scores)
-        op_probs = self.operation_mlp(op_input)
+        op_probs = self.operation_model(op_input)
+        if self.operation_model_type == "mlp":
+            op_probs = torch.sigmoid(op_probs)
+#        if verbose:
+#            print("forward op_probs:")
+#            print(op_probs)
         observed_op_probs = op_probs.gather(dim=2, index=operations).squeeze(dim=-1)
+#        if verbose:
+#            print("forward observed_op_probs:")
+#            print(observed_op_probs)
         pred_tree_scores = observed_op_probs.prod(dim=1)
+#        if verbose:
+#            print("forward pred_tree_scores:")
+#            print(pred_tree_scores)
         pred_tree_total = pred_tree_scores.sum().item()
         pred_tree_probs = pred_tree_scores / pred_tree_total
+#        if verbose:
+#            print("forward pred_tree_probs:")
+#            print(pred_tree_probs)
 
         order_scores = self.ordering_mlp(operations_one_hot)
         order_probs = torch.sigmoid(order_scores)
@@ -140,6 +157,9 @@ class Inducer(nn.Module):
         observed_order_probs = order_probs + (directions * (-2*order_probs + 1))
         observed_order_probs = observed_order_probs.squeeze(dim=-1)
         word_order_probs = observed_order_probs.prod(dim=1) * valid
+#        if verbose:
+#            print("forward word_order_probs:")
+#            print(word_order_probs)
 
         combined_probs = pred_tree_probs * word_order_probs
         #print("combined_probs:")
