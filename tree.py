@@ -30,8 +30,8 @@ class TreeNode:
         self.arg = arg
 
     def set_leaf_nodes(self, leaf_vals):
-        if self.func == None:
-            assert self.arg == None
+        if self.func is None:
+            assert self.arg is None
             assert len(leaf_vals) == 1
             self.val = leaf_vals[0]
         else:
@@ -43,8 +43,8 @@ class TreeNode:
     @staticmethod
     def _set_leaf_nodes(stack, leaf_vals):
         curr = stack.pop(0)
-        if curr.func == None:
-            assert curr.arg == None
+        if curr.func is None:
+            assert curr.arg is None
             curr.val = leaf_vals.pop(0)
         else:
             assert curr.arg
@@ -57,6 +57,14 @@ class TreeNode:
             return "(%s %s)" % (self.func, self.arg)
         else:
             return str(self.val)
+
+    def __eq__(self, other):
+        if self.val != other.val: return False
+        if self.func:
+            if not other.func: return False
+            else: return self.func == other.func and self.arg == other.arg
+        elif other.func: return False
+        else: return True
 
 
 class Tree:
