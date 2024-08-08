@@ -48,9 +48,9 @@ torch.set_printoptions(linewidth=200, precision=2)
 #while epoch < 1000:
 while epoch < MAX_EPOCH:
     if epoch % EPOCH_PRINT_FREQ == 0:
-        print("==== epoch {} ====".format(epoch))
+        print("\n==== Epoch {} ====".format(epoch))
         print("loss:", loss)
-        print("combined_probs:", combined_probs)
+        print("tree probabilities:", combined_probs)
 #        print("ordering_model weight:")
 #        print(inducer.ordering_model.weight)
 #        print("operation_model weight:")
@@ -66,9 +66,9 @@ while epoch < MAX_EPOCH:
     epoch += 1
 
 combined_probs_tracking = torch.stack(combined_probs_tracking, dim=0)
-print("==== Tree probabilities ====")
+print("\n\n==== Tree probabilities ====")
 print(combined_probs_tracking)
 
 loss_tracking = torch.stack(loss_tracking, dim=0)
-print("==== Loss ====")
+print("\n==== Loss ====")
 print(loss_tracking)
