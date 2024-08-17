@@ -7,13 +7,21 @@ from typing import List, Optional
 
 # source for binary tree enumeration: https://algo.monster/liteproblems/894
 
-def compose(v_func, v_arg, method="keep_functor"):
+def compose(v_func, v_arg, op, method="keep_head"):
     """
     Compose functor and argument vectors.
     """
     v_out = None
-    if method == "keep_functor":
-        v_out = v_func
+    if method == "keep_head":
+        # argument attachment: head is functor
+        if op == "A":
+            v_out = v_func
+        # argument attachment: head is argument
+        elif op == "M":
+            v_out = v_arg
+        else:
+            raise NotImplementedError("composition operation not supported: " + op)
+
     elif method == "holographic":
         # https://stackoverflow.com/questions/28284257/circular-cross-correlation-python
         # TODO verify that this is the right thing for holographic composition
@@ -24,8 +32,9 @@ def compose(v_func, v_arg, method="keep_functor"):
 
 
 class TreeNode:
-    def __init__(self, val="x", func=None, arg=None):
+    def __init__(self, val="x", op=None, func=None, arg=None):
         self.val = val
+        self.op = op
         self.func = func
         self.arg = arg
 
@@ -54,7 +63,8 @@ class TreeNode:
     def __repr__(self):
         if self.func:
             assert self.arg
-            return "(%s %s)" % (self.func, self.arg)
+            assert self.op
+            return "(%s %s)%s" % (self.func, self.arg, self.op)
         else:
             return str(self.val)
 
@@ -88,6 +98,8 @@ class Tree:
         # vectors (branching) (post order DFS)
         self._annotate_vectors(vectors)
 
+    # this is keeps track of which predicate role should be considered
+    # for argument attachment
     def _annotate_functor_chains(self):
         self.root.func_chain = 1
         self.leaves = list()
@@ -95,13 +107,20 @@ class Tree:
         stack = [self.root]
         while len(stack) > 0:
             curr = stack.pop(0)
+            curr_op = curr.op
             curr_func_chain = curr.func_chain
             if curr.func:
                 assert curr.arg
                 curr.terminal = False
                 self.nonterminals.append(curr)
-                curr.arg.func_chain = 1
-                curr.func.func_chain = curr_func_chain + 1
+                if curr_op == "A":
+                    curr.arg.func_chain = 1
+                    curr.func.func_chain = curr_func_chain + 1
+                elif curr_op == "M":
+                    curr.arg.func_chain = curr_func_chain
+                    curr.func.func_chain = 1
+                else:
+                    raise NotImplementedError("composition operation not supported: " + curr_op)
                 stack.insert(0, curr.arg)
                 stack.insert(0, curr.func)
             else:
@@ -150,7 +169,7 @@ class Tree:
             Tree._annotate_node_vector(node.func)
             Tree._annotate_node_vector(node.arg)
             # TODO define more general composition
-            node.vector = compose(node.func.vector, node.arg.vector)
+            node.vector = compose(node.func.vector, node.arg.vector, node.op)
 
     def __repr__(self):
         rep = ""
@@ -191,7 +210,8 @@ def full_binary_trees(total_nodes: int) -> List[Optional[TreeNode]]:
         # Combine each left subtree with each right subtree and add the current node as root.
         for left in left_subtrees:
             for right in right_subtrees:
-                fbts.append(TreeNode("x", left, right))
+                fbts.append(TreeNode(op="A", func=left, arg=right))
+                fbts.append(TreeNode(op="M", func=left, arg=right))
   
     # Return the list of all unique full binary trees.
     return fbts
