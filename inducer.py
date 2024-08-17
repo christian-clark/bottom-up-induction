@@ -8,6 +8,64 @@ from tree import Tree, full_binary_trees
 
 MAX_ROLE = 2
 
+
+# words:
+# 0: happy
+# 1: people
+# 2: eat
+# 3: yummy
+# 4: donuts
+
+# operations:
+# 0: arg 1
+# 1: arg 2
+# 2: modification
+# 3: none
+
+# COOC_HAPPY[w, op] gives Pr(op | functor=happy, argument=w)
+COOC_HAPPY = torch.Tensor([
+    [0, 0, 0, 1],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1]
+])
+
+COOC_PEOPLE = torch.Tensor([
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1]
+])
+
+COOC_EAT = torch.Tensor([
+    [0, 0, 0, 1],
+    [1, 0, 0, 0],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 1, 0, 0]
+])
+
+COOC_YUMMY = torch.Tensor([
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 1, 0]
+])
+
+COOC_DONUTS = torch.Tensor([
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1],
+    [0, 0, 0, 1]
+])
+
+COOC = torch.stack([COOC_HAPPY, COOC_PEOPLE, COOC_EAT, COOC_YUMMY, COOC_DONUTS], dim=0)
+print("CEC cooc shape:", COOC.shape)
+
 def enumerate_trees(x):
     # generate all tree structures (catalan)
     # loop through and assign all permutations (factorial)
@@ -23,7 +81,7 @@ def enumerate_trees(x):
             yield t
 
 
-def hacky_operation_model(func_and_arg, version="four_word"):
+def hacky_operation_model(func_and_arg, version="cooc_four_word"):
     """
     non-learnable operation mlp for proof-of-concept system
     in test_inducer.py
@@ -54,6 +112,7 @@ def hacky_operation_model(func_and_arg, version="four_word"):
                         neither = 0
                 t_output.append([arg1, arg2, modification, neither])
             hacky_output.append(t_output)
+
     elif version == "three_word_mod":
         for tree in func_and_arg:
             t_output = list()
@@ -76,6 +135,16 @@ def hacky_operation_model(func_and_arg, version="four_word"):
                     neither = 0
                 t_output.append([arg1, arg2, modification, neither])
             hacky_output.append(t_output)
+
+    if version == "cooc_four_word":
+        for tree in func_and_arg:
+            t_output = list()
+            for nont in tree:
+                ix_func = torch.argmax(nont[:5])
+                ix_arg = torch.argmax(nont[5:])
+                t_output.append(list(COOC[ix_func, ix_arg]))
+            hacky_output.append(t_output)
+
     elif version == "four_word":
         for tree in func_and_arg:
             t_output = list()

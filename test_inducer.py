@@ -62,8 +62,8 @@ x = torch.Tensor([
     [0, 0, 0, 0, 1]
 ])
 
-#inducer = Inducer(x.shape[1], operation_model_type="hacky")
-inducer = Inducer(x.shape[1], ordering_model_type="hacky")
+inducer = Inducer(x.shape[1], operation_model_type="hacky")
+#inducer = Inducer(x.shape[1], ordering_model_type="hacky")
 #inducer = Inducer(x.shape[1])
 # default lr: 0.001
 optimizer = torch.optim.Adam(inducer.parameters())
