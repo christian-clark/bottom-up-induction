@@ -216,3 +216,18 @@ def full_binary_trees(total_nodes: int) -> List[Optional[TreeNode]]:
     # Return the list of all unique full binary trees.
     return fbts
 
+
+def enumerate_trees(x):
+    # generate all tree structures (catalan)
+    # loop through and assign all permutations (factorial)
+    # yield one at a time
+    sent_len = x.shape[0]
+    tree_structures = full_binary_trees(2*sent_len-1)
+    for ts in tree_structures:
+        ps = perm(range(sent_len))
+        for p in ps:
+            ts_curr = deepcopy(ts)
+            ts_curr.set_leaf_nodes(list(p))
+            t = Tree(ts_curr, vectors=list(x))
+            yield t
+    
