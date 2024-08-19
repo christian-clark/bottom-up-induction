@@ -54,7 +54,58 @@ COOC_DONUTS = torch.Tensor([
     [0, 0, 0, 1]
 ])
 
-COOC = torch.stack([COOC_HAPPY, COOC_PEOPLE, COOC_EAT, COOC_YUMMY, COOC_DONUTS], dim=0)
+COOC_FIVE_WORD = torch.stack([COOC_HAPPY, COOC_PEOPLE, COOC_EAT, COOC_YUMMY, COOC_DONUTS], dim=0)
+
+def fixed_op_three_word(func_and_arg):
+    hacky_output = list()
+    """
+    non-learnable operation mlp for proof-of-concept system
+    in test_inducer.py
+    possible operations: arg1 attachment, arg2 attachment, modification, none
+    input dim: trees x nonterminals x (2*dvec)
+    output dim: trees x nonterminals x 4
+    """
+    for tree in func_and_arg:
+        t_output = list()
+        # happy people eat
+        for nont in tree:
+            v_func = nont[:3].tolist()
+            v_arg = nont[3:].tolist()
+            arg1 = 0
+            arg2 = 0
+            modification = 0
+            neither = 1
+            # functor word is "eat" and arg is "people"
+            if int(v_func[2]) and int(v_arg[1]):
+                arg1 = 1
+                neither = 0
+            # functor is "happy" and arg is "people"
+            elif int(v_func[0]) and int(v_arg[1]):
+                # arg is "donuts"
+                modification = 1
+                neither = 0
+            t_output.append([arg1, arg2, modification, neither])
+        hacky_output.append(t_output)
+    return torch.Tensor(hacky_output)
+
+
+def cooc_op_five_word(func_and_arg):
+    """
+    non-learnable operation mlp for proof-of-concept system
+    in test_inducer.py
+    possible operations: arg1 attachment, arg2 attachment, modification, none
+    input dim: trees x nonterminals x (2*dvec)
+    output dim: trees x nonterminals x 4
+    """
+    hacky_output = list()
+    for tree in func_and_arg:
+        t_output = list()
+        for nont in tree:
+            ix_func = torch.argmax(nont[:5])
+            ix_arg = torch.argmax(nont[5:])
+            t_output.append(list(COOC_FIVE_WORD[ix_func, ix_arg]))
+        hacky_output.append(t_output)
+    return torch.Tensor(hacky_output)
 
 
 def hacky_operation_model(func_and_arg, version="cooc_four_word"):
@@ -87,38 +138,6 @@ def hacky_operation_model(func_and_arg, version="cooc_four_word"):
                         arg2 = 1
                         neither = 0
                 t_output.append([arg1, arg2, modification, neither])
-            hacky_output.append(t_output)
-
-    elif version == "three_word_mod":
-        for tree in func_and_arg:
-            t_output = list()
-            # happy people eat
-            for nont in tree:
-                v_func = nont[:3].tolist()
-                v_arg = nont[3:].tolist()
-                arg1 = 0
-                arg2 = 0
-                modification = 0
-                neither = 1
-                # functor word is "eat" and arg is "people"
-                if int(v_func[2]) and int(v_arg[1]):
-                    arg1 = 1
-                    neither = 0
-                # functor is "happy" and arg is "people"
-                elif int(v_func[0]) and int(v_arg[1]):
-                    # arg is "donuts"
-                    modification = 1
-                    neither = 0
-                t_output.append([arg1, arg2, modification, neither])
-            hacky_output.append(t_output)
-
-    if version == "cooc_four_word":
-        for tree in func_and_arg:
-            t_output = list()
-            for nont in tree:
-                ix_func = torch.argmax(nont[:5])
-                ix_arg = torch.argmax(nont[5:])
-                t_output.append(list(COOC[ix_func, ix_arg]))
             hacky_output.append(t_output)
 
     elif version == "four_word":

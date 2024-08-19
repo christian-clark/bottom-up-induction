@@ -3,7 +3,12 @@ from copy import deepcopy
 from itertools import permutations as perm
 from torch import nn
 
-from component_models import hacky_operation_model, hacky_ordering_model
+from component_models import (
+    cooc_op_five_word,
+    fixed_op_three_word,
+    hacky_operation_model,
+    hacky_ordering_model
+)
 from tree import enumerate_trees
 
 MAX_ROLE = 2
@@ -23,6 +28,10 @@ class Inducer(nn.Module):
         #       arg1, arg2, modification, or noop
         if self.operation_model_type == "mlp":
             self.operation_model = nn.Linear(2*self.d, 4)
+        elif self.operation_model_type == "cooc_op_five_word":
+            self.operation_model = cooc_op_five_word
+        elif self.operation_model_type == "fixed_op_three_word":
+            self.operation_model = fixed_op_three_word
         elif self.operation_model_type == "hacky":
             self.operation_model = hacky_operation_model
         else:
@@ -46,9 +55,7 @@ class Inducer(nn.Module):
         valid = list()
         ix = 0
         tree_strings = list()
-        # TODO remove this to allow multiple sentences in batch
-        assert x.shape[0] == 1
-        for t in enumerate_trees(x[0]):
+        for t in enumerate_trees(x):
             if print_trees:
                 print("================ TREE {} ================".format(ix))
                 print(t.root)
@@ -204,10 +211,11 @@ class Inducer(nn.Module):
 #            print(word_order_probs)
 
         combined_probs = pred_tree_probs * word_order_probs
-        #print("combined_probs:")
-        #print(combined_probs)
+        top_ixs = torch.topk(combined_probs, 10, dim=0).indices
         loss = -1 * torch.log(combined_probs.sum())
-        if get_tree_strings:
-            return loss, combined_probs, tree_strings
-        else:
-            return loss, combined_probs
+        return loss, top_ixs
+    
+#        if get_tree_strings:
+#            return loss, combined_probs, tree_strings
+#        else:
+#            return loss, combined_probs
