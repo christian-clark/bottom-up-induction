@@ -109,9 +109,7 @@ def get_config():
         overrides = []
     # config file, and possibly overrides
     elif len(sys.argv[1].split("=")) == 1:
-        print(sys.argv[1])
         top_config.read(sys.argv[1])
-        print(dict(top_config["DEFAULT"]))
         overrides = sys.argv[2:]
     # just overrides
     else:
@@ -152,7 +150,7 @@ def get_training_data(config):
 
 if __name__ == "__main__":
     config = get_config()
-    #print(dict(config))
+    print(dict(config))
     # dim: sents x words x d
     # d is the dimension of the word vectors
     corpus, dim_v = get_training_data(config)
@@ -197,7 +195,7 @@ if __name__ == "__main__":
             #print_tree_probabilities(combined_probs, sort=True, top_k=15)
             #combined_probs_tracking.append(combined_probs)
             for i, ixs in enumerate(per_sent_top_ixs):
-                print("Top trees for sentence {}:".format(i))
+                print("Top trees for sentence {}:".format(i+1))
                 for j, ix in enumerate(ixs[:5]):
                     print("\t[{}] {}".format(j+1, i2t.get_tree(ix, len(corpus[i]))))
             loss_tracking.append(loss)

@@ -51,6 +51,8 @@ class Inducer(nn.Module):
     def forward(self, x, print_trees=False, verbose=True, get_tree_strings=False):
         """x is an n x d vector containing the d-dimensional vectors for a
         sentence of length n"""
+        if len(x) == 1:
+            raise Exception("single-word sentences not supported")
         nonterminals = list()
         valid = list()
         ix = 0
@@ -211,7 +213,10 @@ class Inducer(nn.Module):
 #            print(word_order_probs)
 
         combined_probs = pred_tree_probs * word_order_probs
-        top_ixs = torch.topk(combined_probs, 10, dim=0).indices
+        if len(combined_probs) > 10:
+            top_ixs = torch.topk(combined_probs, 10, dim=0).indices
+        else:
+            top_ixs = torch.sort(combined_probs, descending=True).indices
         loss = -1 * torch.log(combined_probs.sum())
         return loss, top_ixs
     

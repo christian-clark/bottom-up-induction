@@ -21,6 +21,13 @@ COOC_HAPPY = torch.Tensor([
     [0, 0, 0, 1],
     [0, 0, 0, 1]
 ])
+#COOC_HAPPY = torch.Tensor([
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25]
+#])
 
 COOC_PEOPLE = torch.Tensor([
     [0, 0, 0, 1],
@@ -29,6 +36,13 @@ COOC_PEOPLE = torch.Tensor([
     [0, 0, 0, 1],
     [0, 0, 0, 1]
 ])
+#COOC_PEOPLE = torch.Tensor([
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25]
+#])
 
 COOC_EAT = torch.Tensor([
     [0, 0, 0, 1],
@@ -37,6 +51,13 @@ COOC_EAT = torch.Tensor([
     [0, 0, 0, 1],
     [0, 1, 0, 0]
 ])
+#COOC_EAT = torch.Tensor([
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25]
+#])
 
 COOC_YUMMY = torch.Tensor([
     [0, 0, 0, 1],
@@ -45,6 +66,13 @@ COOC_YUMMY = torch.Tensor([
     [0, 0, 0, 1],
     [0, 0, 1, 0]
 ])
+#COOC_YUMMY = torch.Tensor([
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25]
+#])
 
 COOC_DONUTS = torch.Tensor([
     [0, 0, 0, 1],
@@ -53,6 +81,13 @@ COOC_DONUTS = torch.Tensor([
     [0, 0, 0, 1],
     [0, 0, 0, 1]
 ])
+#COOC_DONUTS = torch.Tensor([
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25],
+#    [0.25, 0.25, 0.25, 0.25]
+#])
 
 COOC_FIVE_WORD = torch.stack([COOC_HAPPY, COOC_PEOPLE, COOC_EAT, COOC_YUMMY, COOC_DONUTS], dim=0)
 
@@ -101,9 +136,20 @@ def cooc_op_five_word(func_and_arg):
     for tree in func_and_arg:
         t_output = list()
         for nont in tree:
-            ix_func = torch.argmax(nont[:5])
-            ix_arg = torch.argmax(nont[5:])
-            t_output.append(list(COOC_FIVE_WORD[ix_func, ix_arg]))
+            # TODO correct this to do matrix multiplication (so that vfunc and varg can be distributions, not just one-hot)
+            func = nont[:5].unsqueeze(0)
+            arg = nont[5:].unsqueeze(0)
+            # func dim: 1x5
+            # COOC_FIVE_WORD dim: 5x5x4
+            # output dim after squeeze: 5x4
+            cooc = torch.einsum("ij,jkl->ikl", func, COOC_FIVE_WORD).squeeze(0)
+            # arg dim: 1x5
+            # output dim after squeeze: 4
+            cooc = torch.einsum("ij,jk->ik", arg, cooc).squeeze(0)
+            t_output.append(list(cooc))
+            #ix_func = torch.argmax(nont[:5])
+            #ix_arg = torch.argmax(nont[5:])
+            #t_output.append(list(COOC_FIVE_WORD[ix_func, ix_arg]))
         hacky_output.append(t_output)
     return torch.Tensor(hacky_output)
 
