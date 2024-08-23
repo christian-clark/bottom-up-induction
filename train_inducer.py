@@ -6,7 +6,6 @@ from itertools import permutations
 from inducer import Inducer
 from tree import full_binary_trees
 
-UNK = "<unk>"
 
 DEFAULT_CONFIG = {
     "DEFAULT": {
@@ -123,29 +122,44 @@ def get_config():
     return config
 
 
-def get_training_data(config):
-    word_vectors = dict()
+def get_corpus_and_embeddings(config):
+    #word_vectors = dict()
     # config["word_vectors"] is a CSV
-    first = True
-    for row in csv.reader(open(config["word_vectors"])):
-        w = row[0]
-        v = row[1:]
-        if first:
-            dim_v = len(v)
-            first = False
-        v = torch.Tensor([float(x) for x in v])
-        word_vectors[w] = v
-
-    vectorized_corpus = list()
+    word2ix = dict()
+    # read corpus to get vocab
+    #vectorized_corpus = list()
+    corpus = list()
     for sent in open(config["training_data"]):
-        v_sent = list()
+        sent_ids = list()
+        #v_sent = list()
         for w in sent.strip().split():
-            if w in word_vectors:
-                v_sent.append(word_vectors[w])
-            else:
-                v_sent.append(word_vectors[UNK])
-        vectorized_corpus.append(torch.stack(v_sent))
-    return vectorized_corpus, dim_v
+            if w not in word2ix:
+                word2ix[w] = len(word2ix)
+            sent_ids.append(word2ix[w])
+        corpus.append(torch.tensor(sent_ids))
+
+    print("word2ix:", word2ix)
+
+    # read fixed vectors
+    vocab_size = len(word2ix)
+    vdim = int(config["vector_dim"])
+    fixed_vectors = torch.zeros(vocab_size, vdim)
+    learn_vectors = torch.ones(vocab_size)
+    for row in csv.reader(open(config["fixed_vectors"])):
+        w = row[0]
+        # ignore fixed vectors for words if they aren't in the corpus
+        if w not in word2ix:
+            continue
+        ix = word2ix[w]
+        learn_vectors[ix] = 0
+        v = row[1:]
+        assert len(v) == vdim
+        v = torch.Tensor([float(x) for x in v])
+        fixed_vectors[ix] = v
+
+    #emb = torch.nn.Embedding(len(word2ix), vdim)
+
+    return corpus, fixed_vectors, learn_vectors
 
 
 if __name__ == "__main__":
@@ -153,9 +167,13 @@ if __name__ == "__main__":
     print(dict(config))
     # dim: sents x words x d
     # d is the dimension of the word vectors
-    corpus, dim_v = get_training_data(config)
+    corpus, fixed_vectors, learn_vectors = get_corpus_and_embeddings(config)
+    #corpus, dim_v = get_training_data(config)
     print(corpus)
-    inducer = Inducer(dim_v, config)
+    print(fixed_vectors)
+    print(learn_vectors)
+    # TODO continue here
+    inducer = Inducer(config, learn_vectors, fixed_vectors)
     #inducer = Inducer(x.shape[1], ordering_model_type="hacky")
     #inducer = Inducer(x.shape[1])
     # default lr: 0.001
@@ -191,6 +209,7 @@ if __name__ == "__main__":
         if epoch % config.getint("epoch_print_freq") == 0:
             print("\n==== Epoch {} ====".format(epoch))
             print("loss:", loss)
+            print("embeddings:", torch.softmax(inducer.emb.weight, dim=1))
             #print("tree probabilities:", combined_probs)
             #print_tree_probabilities(combined_probs, sort=True, top_k=15)
             #combined_probs_tracking.append(combined_probs)

@@ -17,17 +17,23 @@ class Inducer(nn.Module):
 #    def __init__(self, vector_dim, operation_model_type="mlp", 
 #                 ordering_model_type="mlp"
 #        ):
-    def __init__(self, vector_dim, config):
+    def __init__(self, config, learn_vectors, fixed_vectors):
         super(Inducer, self).__init__()
-        self.d = vector_dim
-        self.operation_model_type = config["operation_model_type"]
-        self.ordering_model_type = config["ordering_model_type"]
+        self.learn_vectors = learn_vectors
+        self.fixed_vectors = fixed_vectors
+        self.vocab_size = fixed_vectors.shape[0]
+        self.vdim = fixed_vectors.shape[1]
+        #self.d = vector_dim
+        self.emb = torch.nn.Embedding(self.vocab_size, self.vdim)
+        print(self.emb)
         # operation probabilities
         # - input: functor and argument vectors (dim: 2*d)
         # - output: probability of composition operations:
         #       arg1, arg2, modification, or noop
+        # TODO convert string directly into function?
+        self.operation_model_type = config["operation_model_type"]
         if self.operation_model_type == "mlp":
-            self.operation_model = nn.Linear(2*self.d, 4)
+            self.operation_model = nn.Linear(2*self.vdim, 4)
         elif self.operation_model_type == "cooc_op_five_word":
             self.operation_model = cooc_op_five_word
         elif self.operation_model_type == "fixed_op_three_word":
@@ -43,14 +49,24 @@ class Inducer(nn.Module):
         #       - 1: arg2 attachment
         #       - 2: modifier attachment
         # - output: probability of functor on left given composition operation
+        self.ordering_model_type = config["ordering_model_type"]
         if self.ordering_model_type == "mlp":
             self.ordering_model = nn.Linear(3, 1)
         else:
             self.ordering_model = hacky_ordering_model
 
+    def vectorize_sentence(self, ids):
+        learned_vec = torch.softmax(self.emb(ids), dim=1)
+        learn = self.learn_vectors.gather(dim=0, index=ids).unsqueeze(dim=1)
+        repeated_ids = ids.unsqueeze(dim=1).repeat(1, self.vdim)
+        fixed_vec = self.fixed_vectors.gather(dim=0, index=repeated_ids)
+        combined_vec = learned_vec*learn + fixed_vec
+        return combined_vec
+
     def forward(self, x, print_trees=False, verbose=True, get_tree_strings=False):
         """x is an n x d vector containing the d-dimensional vectors for a
         sentence of length n"""
+        x = self.vectorize_sentence(x)
         if len(x) == 1:
             raise Exception("single-word sentences not supported")
         nonterminals = list()

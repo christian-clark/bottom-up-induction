@@ -132,6 +132,9 @@ def cooc_op_five_word(func_and_arg):
     input dim: trees x nonterminals x (2*dvec)
     output dim: trees x nonterminals x 4
     """
+    print("CEC input shape:")
+    print(func_and_arg.shape)
+    # TODO do this with tensor operations so it can backprop
     hacky_output = list()
     for tree in func_and_arg:
         t_output = list()
