@@ -163,6 +163,22 @@ def get_corpus_and_embeddings(config):
     return corpus, fixed_vectors, learn_vectors
 
 
+def get_cooccurrences(config):
+    if "cooccurrence_scores_dir" not in config:
+        return None
+    cooc = list()
+    dir = config["cooccurrence_scores_dir"]
+    for op in ["argument1", "argument2", "modifier", "null"]:
+        op_scores = list()
+        for row in csv.reader(open(dir + '/' + op)):
+            scores = [float(s) for s in row]
+            op_scores.append(scores)
+        cooc.append(op_scores)
+    cooc = torch.Tensor(cooc).permute((1, 2, 0))
+    cooc = torch.softmax(cooc, dim=2)
+    return cooc
+
+
 if __name__ == "__main__":
     config = get_config()
     print(dict(config))
@@ -173,8 +189,8 @@ if __name__ == "__main__":
     print(corpus)
     print(fixed_vectors)
     print(learn_vectors)
-    # TODO continue here
-    inducer = Inducer(config, learn_vectors, fixed_vectors)
+    cooccurrences = get_cooccurrences(config)
+    inducer = Inducer(config, learn_vectors, fixed_vectors, cooccurrences)
     #inducer = Inducer(x.shape[1], ordering_model_type="hacky")
     #inducer = Inducer(x.shape[1])
     # default lr: 0.001

@@ -18,10 +18,11 @@ class Inducer(nn.Module):
 #    def __init__(self, vector_dim, operation_model_type="mlp", 
 #                 ordering_model_type="mlp"
 #        ):
-    def __init__(self, config, learn_vectors, fixed_vectors):
+    def __init__(self, config, learn_vectors, fixed_vectors, cooccurrences=None):
         super(Inducer, self).__init__()
         self.learn_vectors = learn_vectors
         self.fixed_vectors = fixed_vectors
+        self.cooccurrences = cooccurrences
         self.vocab_size = fixed_vectors.shape[0]
         self.dvec = fixed_vectors.shape[1]
         #self.d = vector_dim
@@ -35,8 +36,8 @@ class Inducer(nn.Module):
         self.operation_model_type = config["operation_model_type"]
         if self.operation_model_type == "mlp":
             self.operation_model = nn.Linear(2*self.dvec, 4)
-        elif self.operation_model_type == "cooc_op_five_word":
-            self.operation_model = CoocOpModel(self.dvec)
+        elif self.operation_model_type == "cooc_op":
+            self.operation_model = CoocOpModel(self.dvec, cooccurrences)
             #self.operation_model = cooc_op_five_word
         elif self.operation_model_type == "fixed_op_three_word":
             self.operation_model = fixed_op_three_word

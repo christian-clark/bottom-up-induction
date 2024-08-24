@@ -126,9 +126,10 @@ def fixed_op_three_word(func_and_arg):
 
 
 class CoocOpModel(nn.Module):
-    def __init__(self, dvec):
+    def __init__(self, dvec, cooccurrences):
         super(CoocOpModel, self).__init__()
         self.dvec = dvec
+        self.cooccurrences = cooccurrences
 
     def forward(self, func_and_arg):
 #        # dim: trees x nts x 1 x dvec
@@ -151,7 +152,8 @@ class CoocOpModel(nn.Module):
 
         # COOC_FIVE_WORD dim: dvec x dvec x ops
         # dim: ops x 1 x 1 x dvec x dvec
-        cooc = COOC_FIVE_WORD.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
+        #cooc = COOC_FIVE_WORD.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
+        cooc = self.cooccurrences.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
         # dim: ops x trees x nts x dvec
         cooc = (cooc * func).sum(dim=-2)
 
