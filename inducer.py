@@ -4,6 +4,7 @@ from itertools import permutations as perm
 from torch import nn
 
 from component_models import (
+    CoocOpModel,
     cooc_op_five_word,
     fixed_op_three_word,
     hacky_operation_model,
@@ -22,9 +23,9 @@ class Inducer(nn.Module):
         self.learn_vectors = learn_vectors
         self.fixed_vectors = fixed_vectors
         self.vocab_size = fixed_vectors.shape[0]
-        self.vdim = fixed_vectors.shape[1]
+        self.dvec = fixed_vectors.shape[1]
         #self.d = vector_dim
-        self.emb = torch.nn.Embedding(self.vocab_size, self.vdim)
+        self.emb = torch.nn.Embedding(self.vocab_size, self.dvec)
         print(self.emb)
         # operation probabilities
         # - input: functor and argument vectors (dim: 2*d)
@@ -33,9 +34,10 @@ class Inducer(nn.Module):
         # TODO convert string directly into function?
         self.operation_model_type = config["operation_model_type"]
         if self.operation_model_type == "mlp":
-            self.operation_model = nn.Linear(2*self.vdim, 4)
+            self.operation_model = nn.Linear(2*self.dvec, 4)
         elif self.operation_model_type == "cooc_op_five_word":
-            self.operation_model = cooc_op_five_word
+            self.operation_model = CoocOpModel(self.dvec)
+            #self.operation_model = cooc_op_five_word
         elif self.operation_model_type == "fixed_op_three_word":
             self.operation_model = fixed_op_three_word
         elif self.operation_model_type == "hacky":
@@ -58,7 +60,7 @@ class Inducer(nn.Module):
     def vectorize_sentence(self, ids):
         learned_vec = torch.softmax(self.emb(ids), dim=1)
         learn = self.learn_vectors.gather(dim=0, index=ids).unsqueeze(dim=1)
-        repeated_ids = ids.unsqueeze(dim=1).repeat(1, self.vdim)
+        repeated_ids = ids.unsqueeze(dim=1).repeat(1, self.dvec)
         fixed_vec = self.fixed_vectors.gather(dim=0, index=repeated_ids)
         combined_vec = learned_vec*learn + fixed_vec
         return combined_vec
@@ -230,11 +232,11 @@ class Inducer(nn.Module):
 
         combined_probs = pred_tree_probs * word_order_probs
         if len(combined_probs) > 10:
-            top_ixs = torch.topk(combined_probs, 10, dim=0).indices
+            top = torch.topk(combined_probs, 10, dim=0)
         else:
-            top_ixs = torch.sort(combined_probs, descending=True).indices
+            top = torch.sort(combined_probs, descending=True)
         loss = -1 * torch.log(combined_probs.sum())
-        return loss, top_ixs
+        return loss, top
     
 #        if get_tree_strings:
 #            return loss, combined_probs, tree_strings

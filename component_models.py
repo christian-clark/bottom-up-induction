@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 
 # words:
 # 0: happy
@@ -124,6 +125,61 @@ def fixed_op_three_word(func_and_arg):
     return torch.Tensor(hacky_output)
 
 
+class CoocOpModel(nn.Module):
+    def __init__(self, dvec):
+        super(CoocOpModel, self).__init__()
+        self.dvec = dvec
+
+    def forward(self, func_and_arg):
+#        # dim: trees x nts x 1 x dvec
+#        func = func_and_arg[..., :self.dvec].unsqueeze(dim=2)
+#        arg = func_and_arg[..., self.dvec:]
+#
+#        # COOC_FIVE_WORD dim: dvec x dvec x ops
+#        # dim: ops x 1 x 1 x dvec x dvec
+#        cooc = COOC_FIVE_WORD.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
+#        print("func shape:", func.shape)
+#        print("cooc shape:", cooc.shape)
+#        # dim: ops x trees x nts x dvec
+#        cooc = torch.matmul(func, cooc).squeeze(dim=3)
+#        print("cooc shape:", cooc.shape)
+#        print("cooc[:, 0, ...]:", cooc[:, 0, ...])
+#        raise Exception
+
+        # dim: 1 x trees x nts x dvec x 1
+        func = func_and_arg[..., :self.dvec].unsqueeze(0).unsqueeze(-1)
+
+        # COOC_FIVE_WORD dim: dvec x dvec x ops
+        # dim: ops x 1 x 1 x dvec x dvec
+        cooc = COOC_FIVE_WORD.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
+        # dim: ops x trees x nts x dvec
+        cooc = (cooc * func).sum(dim=-2)
+
+        # dim: 1 x trees x nts x dvec
+        arg = func_and_arg[..., self.dvec:].unsqueeze(0)
+        # dim: ops x trees x nts
+        cooc = (cooc * arg).sum(dim=-1).permute(1, 2, 0)
+
+        return cooc
+
+
+
+#        func = func_and_arg[..., :self.dvec]
+#        arg = func_and_arg[..., self.dvec:]
+#        # NOTE: the einsums seem to be very slow
+#        # NOTE: for some reason, this operation model seems to cause much
+#        # smaller gradient updates to the word embeddings
+#        # func dim: trees x nts x dvec
+#        # COOC_FIVE_WORD dim: dvec x dvec x ops
+#        # output dim: trees x nts x dvec x ops
+#        # TODO pass cooccurrences in rather than using hard-coded values
+#        cooc = torch.einsum("tnu,uvo->tnvo", func, COOC_FIVE_WORD)
+#        # arg dim: trees x nts x dvec
+#        # cooc dim: trees x nts x dvec x ops
+#        # output dim: trees x nts x ops
+#        cooc = torch.einsum("tnv,tnvo->tno", arg, cooc)
+#        return cooc
+
 def cooc_op_five_word(func_and_arg):
     """
     non-learnable operation mlp for proof-of-concept system
@@ -132,29 +188,43 @@ def cooc_op_five_word(func_and_arg):
     input dim: trees x nonterminals x (2*dvec)
     output dim: trees x nonterminals x 4
     """
-    print("CEC input shape:")
-    print(func_and_arg.shape)
-    # TODO do this with tensor operations so it can backprop
-    hacky_output = list()
-    for tree in func_and_arg:
-        t_output = list()
-        for nont in tree:
-            # TODO correct this to do matrix multiplication (so that vfunc and varg can be distributions, not just one-hot)
-            func = nont[:5].unsqueeze(0)
-            arg = nont[5:].unsqueeze(0)
-            # func dim: 1x5
-            # COOC_FIVE_WORD dim: 5x5x4
-            # output dim after squeeze: 5x4
-            cooc = torch.einsum("ij,jkl->ikl", func, COOC_FIVE_WORD).squeeze(0)
-            # arg dim: 1x5
-            # output dim after squeeze: 4
-            cooc = torch.einsum("ij,jk->ik", arg, cooc).squeeze(0)
-            t_output.append(list(cooc))
-            #ix_func = torch.argmax(nont[:5])
-            #ix_arg = torch.argmax(nont[5:])
-            #t_output.append(list(COOC_FIVE_WORD[ix_func, ix_arg]))
-        hacky_output.append(t_output)
-    return torch.Tensor(hacky_output)
+    # TODO don't hard-code 5; pass in from config
+    func = func_and_arg[..., :5]
+    arg = func_and_arg[..., 5:]
+
+    # func dim: trees x nts x dvec
+    # COOC_FIVE_WORD dim: dvec x dvec x ops
+    # output dim: trees x nts x dvec x ops
+    cooc = torch.einsum("tnu,uvo->tnvo", func, COOC_FIVE_WORD)
+    # arg dim: trees x nts x dvec
+    # cooc dim: trees x nts x dvec x ops
+    # output dim: trees x nts x ops
+    cooc = torch.einsum("tnv,tnvo->tno", arg, cooc)
+
+    print("cooc:", cooc[0])
+
+    return cooc
+
+#    hacky_output = list()
+#    for tree in func_and_arg:
+#        t_output = list()
+#        for nont in tree:
+#            # TODO correct this to do matrix multiplication (so that vfunc and varg can be distributions, not just one-hot)
+#            func = nont[:5].unsqueeze(0)
+#            arg = nont[5:].unsqueeze(0)
+#            # func dim: 1x5
+#            # COOC_FIVE_WORD dim: 5x5x4
+#            # output dim after squeeze: 5x4
+#            cooc = torch.einsum("ij,jkl->ikl", func, COOC_FIVE_WORD).squeeze(0)
+#            # arg dim: 1x5
+#            # output dim after squeeze: 4
+#            cooc = torch.einsum("ij,jk->ik", arg, cooc).squeeze(0)
+#            t_output.append(list(cooc))
+#            #ix_func = torch.argmax(nont[:5])
+#            #ix_arg = torch.argmax(nont[5:])
+#            #t_output.append(list(COOC_FIVE_WORD[ix_func, ix_arg]))
+#        hacky_output.append(t_output)
+#    return torch.Tensor(hacky_output)
 
 
 def hacky_operation_model(func_and_arg, version="cooc_four_word"):

@@ -145,17 +145,18 @@ def get_corpus_and_embeddings(config):
     vdim = int(config["vector_dim"])
     fixed_vectors = torch.zeros(vocab_size, vdim)
     learn_vectors = torch.ones(vocab_size)
-    for row in csv.reader(open(config["fixed_vectors"])):
-        w = row[0]
-        # ignore fixed vectors for words if they aren't in the corpus
-        if w not in word2ix:
-            continue
-        ix = word2ix[w]
-        learn_vectors[ix] = 0
-        v = row[1:]
-        assert len(v) == vdim
-        v = torch.Tensor([float(x) for x in v])
-        fixed_vectors[ix] = v
+    if "fixed_vectors" in config:
+        for row in csv.reader(open(config["fixed_vectors"])):
+            w = row[0]
+            # ignore fixed vectors for words if they aren't in the corpus
+            if w not in word2ix:
+                continue
+            ix = word2ix[w]
+            learn_vectors[ix] = 0
+            v = row[1:]
+            assert len(v) == vdim
+            v = torch.Tensor([float(x) for x in v])
+            fixed_vectors[ix] = v
 
     #emb = torch.nn.Embedding(len(word2ix), vdim)
 
@@ -198,25 +199,34 @@ if __name__ == "__main__":
         else: v = False
         #loss, combined_probs = inducer(x, verbose=v)
         per_sent_loss = list()
-        per_sent_top_ixs = list()
+        per_sent_top = list()
         for sent in corpus:
-            sent_loss, top_ixs = inducer(sent, verbose=v)
+            sent_loss, top = inducer(sent, verbose=v)
             per_sent_loss.append(sent_loss)
-            per_sent_top_ixs.append(top_ixs)
+            per_sent_top.append(top)
         loss = sum(per_sent_loss)
         loss.backward()
         optimizer.step()
         if epoch % config.getint("epoch_print_freq") == 0:
             print("\n==== Epoch {} ====".format(epoch))
             print("loss:", loss)
-            print("embeddings:", torch.softmax(inducer.emb.weight, dim=1))
+            #print("embeddings:", torch.softmax(inducer.emb.weight, dim=1))
+            learned_emb_softmax = torch.softmax(inducer.emb.weight, dim=1)
+            combined_emb = \
+                learned_emb_softmax*inducer.learn_vectors.unsqueeze(dim=1) \
+                    + inducer.fixed_vectors
+            print("embeddings:")
+            print(combined_emb)
             #print("tree probabilities:", combined_probs)
             #print_tree_probabilities(combined_probs, sort=True, top_k=15)
             #combined_probs_tracking.append(combined_probs)
-            for i, ixs in enumerate(per_sent_top_ixs):
+            for i, top in enumerate(per_sent_top):
                 print("Top trees for sentence {}:".format(i+1))
-                for j, ix in enumerate(ixs[:5]):
+                indices = top.indices
+                values = top.values
+                for j, ix in enumerate(indices[:5]):
                     print("\t[{}] {}".format(j+1, i2t.get_tree(ix, len(corpus[i]))))
+                    print("\t\tProb =", round(values[j].item(), 4))
             loss_tracking.append(loss)
         epoch += 1
     
