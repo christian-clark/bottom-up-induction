@@ -179,9 +179,7 @@ def get_cooccurrences(config):
     return cooc
 
 
-if __name__ == "__main__":
-    config = get_config()
-    print(dict(config))
+def train_inducer(config):
     # dim: sents x words x d
     # d is the dimension of the word vectors
     corpus, fixed_vectors, learn_vectors = get_corpus_and_embeddings(config)
@@ -253,3 +251,12 @@ if __name__ == "__main__":
     loss_tracking = torch.stack(loss_tracking, dim=0)
     print("\n==== Loss ====")
     print(loss_tracking)
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == "-h":
+        print("Usage: train_inducer.py [config] [overrides]")
+    else:
+        config = get_config()
+        print(dict(config))
+        train_inducer(config)
