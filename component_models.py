@@ -132,38 +132,17 @@ class CoocOpModel(nn.Module):
         self.cooccurrences = cooccurrences
 
     def forward(self, func_and_arg):
-#        # dim: trees x nts x 1 x dvec
-#        func = func_and_arg[..., :self.dvec].unsqueeze(dim=2)
-#        arg = func_and_arg[..., self.dvec:]
-#
-#        # COOC_FIVE_WORD dim: dvec x dvec x ops
-#        # dim: ops x 1 x 1 x dvec x dvec
-#        cooc = COOC_FIVE_WORD.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
-#        print("func shape:", func.shape)
-#        print("cooc shape:", cooc.shape)
-#        # dim: ops x trees x nts x dvec
-#        cooc = torch.matmul(func, cooc).squeeze(dim=3)
-#        print("cooc shape:", cooc.shape)
-#        print("cooc[:, 0, ...]:", cooc[:, 0, ...])
-#        raise Exception
-
         # dim: 1 x trees x nts x dvec x 1
         func = func_and_arg[..., :self.dvec].unsqueeze(0).unsqueeze(-1)
-
-        # COOC_FIVE_WORD dim: dvec x dvec x ops
         # dim: ops x 1 x 1 x dvec x dvec
-        #cooc = COOC_FIVE_WORD.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
         cooc = self.cooccurrences.unsqueeze(0).unsqueeze(0).permute(4,0,1,2,3)
         # dim: ops x trees x nts x dvec
         cooc = (cooc * func).sum(dim=-2)
-
         # dim: 1 x trees x nts x dvec
         arg = func_and_arg[..., self.dvec:].unsqueeze(0)
         # dim: ops x trees x nts
         cooc = (cooc * arg).sum(dim=-1).permute(1, 2, 0)
-
         return cooc
-
 
 
 #        func = func_and_arg[..., :self.dvec]
