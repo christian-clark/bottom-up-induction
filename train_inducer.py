@@ -53,53 +53,6 @@ def print_tree_probabilities(probs, sort=False, top_k=None):
         print("\t{}\t{:0.3e}".format(ix, p))
 
 
-# word vectors:
-#
-#           animate eating  edible
-# people    1       0       0
-# eat       0       1       0
-# donuts    0       0       1
-
-#role1(func, arg):
-#func[eating] AND arg[animate]
-
-#role2(func, arg):
-#func[eating] AND arg[edible]
-
-#composition: just keep functor vector
-
-
-# people eat donuts
-# or
-# happy people eat
-#x = torch.Tensor([
-#    [1, 0, 0],
-#    [0, 1, 0],
-#    [0, 0, 1]
-#])
-
-#x = torch.Tensor([
-#    [0.1, 0.02, -0.03],
-#    [-0.02, 0.2, 0.01],
-#    [-0.01, 0.03, 0.3]
-#])
-
-# words:
-# 0: happy
-# 1: people
-# 2: eat
-# 3: yummy
-# 4: donuts
-
-# happy people eat donuts
-#x = torch.Tensor([
-#    [1, 0, 0, 0, 0],
-#    [0, 1, 0, 0, 0],
-#    [0, 0, 1, 0, 0],
-#    [0, 0, 0, 0, 1]
-#])
-#
-
 def get_config():
     top_config = ConfigParser()
     top_config.read_dict(DEFAULT_CONFIG)
@@ -123,15 +76,11 @@ def get_config():
 
 
 def get_corpus_and_embeddings(config):
-    #word_vectors = dict()
-    # config["word_vectors"] is a CSV
     word2ix = dict()
     # read corpus to get vocab
-    #vectorized_corpus = list()
     corpus = list()
     for sent in open(config["training_data"]):
         sent_ids = list()
-        #v_sent = list()
         for w in sent.strip().split():
             if w not in word2ix:
                 word2ix[w] = len(word2ix)
@@ -139,8 +88,6 @@ def get_corpus_and_embeddings(config):
         corpus.append(torch.tensor(sent_ids))
 
     print("word2ix:", word2ix)
-
-    # read fixed vectors
     vocab_size = len(word2ix)
     vdim = int(config["vector_dim"])
     fixed_vectors = torch.zeros(vocab_size, vdim)
@@ -158,8 +105,6 @@ def get_corpus_and_embeddings(config):
             v = torch.Tensor([float(x) for x in v])
             fixed_vectors[ix] = v
 
-    #emb = torch.nn.Embedding(len(word2ix), vdim)
-
     return corpus, fixed_vectors, learn_vectors
 
 
@@ -168,7 +113,8 @@ def get_cooccurrences(config):
         return None
     cooc = list()
     dir = config["cooccurrence_scores_dir"]
-    for op in ["argument1", "argument2", "modifier", "null"]:
+    #for op in ["argument1", "argument2", "modifier", "null"]:
+    for op in ["argument1", "argument2", "modifier"]:
         op_scores = list()
         for row in csv.reader(open(dir + '/' + op)):
             scores = [float(s) for s in row]
@@ -183,27 +129,13 @@ def train_inducer(config):
     # dim: sents x words x d
     # d is the dimension of the word vectors
     corpus, fixed_vectors, learn_vectors = get_corpus_and_embeddings(config)
-    #corpus, dim_v = get_training_data(config)
     print(corpus)
     print(fixed_vectors)
     print(learn_vectors)
     cooccurrences = get_cooccurrences(config)
     inducer = Inducer(config, learn_vectors, fixed_vectors, cooccurrences)
-    #inducer = Inducer(x.shape[1], ordering_model_type="hacky")
-    #inducer = Inducer(x.shape[1])
-    # default lr: 0.001
     optimizer = torch.optim.Adam(inducer.parameters())
     epoch = 0
-    #loss, combined_probs = inducer(x, print_trees=True)
-    #loss, combined_probs, tree_strings = inducer(x, get_tree_strings = True)
-    #loss = inducer(corpus, get_tree_strings = True)
-#    for ix, s in enumerate(tree_strings):
-#        print("\n======== TREE {} ========".format(ix))
-#        print(s)
-#    for ix in [448, 168, 552, 360, 266, 936, 744, 462]:
-#        print("\n======== TREE {} ========".format(ix))
-#        print(tree_strings[ix])
-    #combined_probs_tracking = list()
     loss_tracking = list()
     i2t = IxToTree()
     torch.set_printoptions(linewidth=200, precision=2)
@@ -224,29 +156,21 @@ def train_inducer(config):
         if epoch % config.getint("epoch_print_freq") == 0:
             print("\n==== Epoch {} ====".format(epoch))
             print("loss:", loss)
-            #print("embeddings:", torch.softmax(inducer.emb.weight, dim=1))
             learned_emb_softmax = torch.softmax(inducer.emb.weight, dim=1)
             combined_emb = \
                 learned_emb_softmax*inducer.learn_vectors.unsqueeze(dim=1) \
                     + inducer.fixed_vectors
             print("embeddings:")
             print(combined_emb)
-            #print("tree probabilities:", combined_probs)
-            #print_tree_probabilities(combined_probs, sort=True, top_k=15)
-            #combined_probs_tracking.append(combined_probs)
             for i, top in enumerate(per_sent_top):
                 print("Top trees for sentence {}:".format(i+1))
                 indices = top.indices
                 values = top.values
                 for j, ix in enumerate(indices[:5]):
                     print("\t[{}] {}".format(j+1, i2t.get_tree(ix, len(corpus[i]))))
-                    print("\t\tProb =", round(values[j].item(), 4))
+                    print("\t\tScore =", round(values[j].item(), 4))
             loss_tracking.append(loss)
         epoch += 1
-    
-    #combined_probs_tracking = torch.stack(combined_probs_tracking, dim=0)
-    #print("\n\n==== Tree probabilities ====")
-    #print(combined_probs_tracking)
     
     loss_tracking = torch.stack(loss_tracking, dim=0)
     print("\n==== Loss ====")
