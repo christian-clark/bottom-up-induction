@@ -3,16 +3,16 @@ from copy import deepcopy
 from itertools import permutations as perm
 from torch import nn
 
-from component_models import (
-    CoocOpModel,
-    cooc_op_five_word,
-    fixed_op_three_word,
-    hacky_operation_model,
-    hacky_ordering_model
-)
+from component_models import CoocOpModel
 from tree import enumerate_trees
 
 MAX_ROLE = 2
+TINY = 1e-9
+DEBUG = False
+
+def printDebug(*args, **kwargs):
+    if DEBUG:
+        print(*args, **kwargs)
 
 class Inducer(nn.Module):
     def __init__(self, config, learn_vectors, fixed_vectors, cooccurrences=None):
@@ -23,22 +23,18 @@ class Inducer(nn.Module):
         self.vocab_size = fixed_vectors.shape[0]
         self.dvec = fixed_vectors.shape[1]
         self.emb = torch.nn.Embedding(self.vocab_size, self.dvec)
-        print(self.emb)
+        # TODO read this from config once other composition methods are
+        # supported
+        self.composition_method = "head"
+        self.beam_size = config.getint("beam_size")
         # operation probabilities
         # - input: functor and argument vectors (dim: 2*d)
         # - output: probability of composition operations:
         #       arg1, arg2, modification, or noop
         # TODO convert string directly into function?
         self.operation_model_type = config["operation_model_type"]
-        if self.operation_model_type == "mlp":
-            self.operation_model = nn.Linear(2*self.dvec, 4)
-        elif self.operation_model_type == "cooc_op":
-            self.operation_model = CoocOpModel(self.dvec, cooccurrences)
-            #self.operation_model = cooc_op_five_word
-        elif self.operation_model_type == "fixed_op_three_word":
-            self.operation_model = fixed_op_three_word
-        elif self.operation_model_type == "hacky":
-            self.operation_model = hacky_operation_model
+        if self.operation_model_type == "cooc_op":
+            self.operation_model = CoocOpModel(cooccurrences)
         else:
             raise NotImplementedError()
         # ordering probabilities
@@ -61,111 +57,324 @@ class Inducer(nn.Module):
         fixed_vec = self.fixed_vectors.gather(dim=0, index=repeated_ids)
         combined_vec = learned_vec*learn + fixed_vec
         return combined_vec
+    
+    def compose_vectors(self, func, arg, op):
+        # func dim: ... x dvec x n
+        # arg dim: ... x dvec x n
+        # op dim: ... x 1 x n
+        # n is the total number of (func, arg, op) triplets to compose
+        if self.composition_method == "head":
+            is_arg1 = (op == 0)
+            is_arg2 = (op == 1)
+            is_mod = (op == 2)
+            # in arg1 or arg2 attachment, functor propagates
+            prop_func = is_arg1 | is_arg2
+            # in modifier attachment, argument propagates
+            prop_arg = is_mod
 
-    def forward(self, x, print_trees=False, verbose=True, get_tree_strings=False):
+            # dim: ... x 1 x n
+            func_arg1_flag = func[..., -2:-1, :].long()
+            # dim: ... x 1 x n
+            new_arg1_flag = is_arg1 | func_arg1_flag
+            # dim: ... x 1 x n
+            func_arg2_flag = func[..., -1:0, :].long()
+            # dim: ... x 1 x n
+            new_arg2_flag = is_arg2 | func_arg2_flag
+
+            printDebug("func shape:", func.shape)
+            printDebug("new_arg1_flag shape:", new_arg1_flag.shape)
+
+            func[..., -2:-1, :] = new_arg1_flag
+            func[..., -1:0, :] = new_arg2_flag
+
+            # check that all ops are acceptable values
+            assert all((prop_arg | prop_func).reshape(-1)), "all operations must be 0, 1, or 2"
+            output = prop_func * func + prop_arg * arg
+        else:
+            raise NotImplementedError
+        return output
+
+    def forward(self, x, return_backpointers=False):
         """x is an n x d vector containing the d-dimensional vectors for a
         sentence of length n"""
+        torch.autograd.set_detect_anomaly(True)
+        # dim: imax x dvec
         x = self.vectorize_sentence(x)
         if len(x) == 1:
             raise Exception("single-word sentences not supported")
-        nonterminals = list()
-        valid = list()
-        ix = 0
-        tree_strings = list()
-        for t in enumerate_trees(x):
-            if print_trees:
-                print("================ TREE {} ================".format(ix))
-                print(t.root)
-                print(t)
-                print()
-            if get_tree_strings:
-                tree_strings.append(str(t.root) + "\n" + str(t))
-            nonterminals.append(t.nonterminals)
-            if not t.root.separable or t.max_func_chain > MAX_ROLE:
-                valid.append(0)
-            else:
-                valid.append(1)
-            ix += 1
+        sent_len = x.shape[0]
+        beam = self.beam_size
+        # vectors are concatenated with two extra bits that indicate whether
+        # a word has combined with a first and/or second argument already
+        dvec = self.dvec + 2
+        # dim: ijdiff x imax x beam x dvec
+        # and/or second argument already
+        left_chart_vecs = torch.zeros((sent_len, sent_len, beam, dvec))
+        # dim: ijdiff x imax x beam
+        #left_chart_op_scores = torch.zeros((sent_len, sent_len, beam))
+        # can't set to zeros because this gets log transformed
+        left_chart_op_scores = torch.full((sent_len, sent_len, beam), fill_value=TINY)
+        # dim: ijdiff x imax x beam
+        left_chart_ord_probs = torch.zeros((sent_len, sent_len, beam))
+        #left_chart_vecs[0, :, 0] = x
+        left_chart_vecs[0, :, 0, :self.dvec] = x
+        left_chart_op_scores[0, :, 0] = 1
+        left_chart_ord_probs[0, :, 0] = 1
+        if return_backpointers:
+            # dim: ijdiff x imax x beam x 5
+            # 5 is for storing ijdiff, left beam ix, right beam ix,
+            # dir and op
+            backpointers = torch.full((sent_len, sent_len, beam, 5), fill_value=-1)
+            #backpointers = [[[None for i in range(beam)] for j in range(sent_len)] for k in range(sent_len)]
 
-        func_vecs = list()
-        arg_vecs = list()
-        operations = list()
-        operations_one_hot = list()
-        directions = list()
+        right_chart_vecs = left_chart_vecs
+        right_chart_op_scores = left_chart_op_scores
+        right_chart_ord_probs = left_chart_ord_probs
+        for ij_diff in range(1, sent_len):
+            printDebug("== ijdiff: {} ==".format(ij_diff))
+        #for ij_diff in range(1, 2):
+            imin = 0
+            imax = sent_len - ij_diff
+            jmin = ij_diff
+            jmax = sent_len
+            height = ij_diff
 
-        #for t in nonterminals[:10]:
-        for t in nonterminals:
-            curr_func_vecs = list()
-            curr_arg_vecs = list()
-            curr_ops = list()
+            ########
+            # get operation scores from combining all pairs of vectors in left
+            # and right beams
+            ########
+            # dim: ijdiff x imax x beam x dvec
+            b_vec = left_chart_vecs[0:height, imin:imax]
+            # dim: ijdiff x imax x lbeam x rbeam x dvec
+            b_vec = b_vec.unsqueeze(dim=-2).expand(-1, -1, -1, beam, -1)
+            # dim: ijdiff x imax x (lbeam * rbeam) x dvec
+            b_vec = b_vec.reshape(ij_diff, imax, beam**2, dvec)
 
-            curr_dirs = list()
-            for nt in t:
-                curr_func_vecs.append(nt.func.vector)
-                curr_arg_vecs.append(nt.arg.vector)
+            printDebug("current b_vec:")
+            printDebug(b_vec.reshape(ij_diff, imax, beam, beam, dvec))
 
-                if nt.op == "A":
-                    if nt.func_chain == 1:
-                        # arg1
-                        curr_ops.append(0)
-                    # NOTE: this also catches longer functor chains. But these
-                    # will be caught as not valid
-                    else:
-                        # arg2
-                        curr_ops.append(1)
-                elif nt.op == "M":
-                    curr_ops.append(2)
-                # for the reverse direction - noop
-                if nt.functor_position == "L":
-                    curr_dirs.append(0)
-                # NOTE: this also catches cases where functor position
-                # is X, i.e. for permutations that aren't separable.
-                # But these will be caught as not valid
-                else:
-                    curr_dirs.append(1)
-            curr_func_vecs = torch.stack(curr_func_vecs, dim=0)
-            func_vecs.append(curr_func_vecs)
-            curr_arg_vecs = torch.stack(curr_arg_vecs, dim=0)
-            arg_vecs.append(curr_arg_vecs)
-            curr_ops = torch.tensor(curr_ops)
-            # 3 classes for arg1, arg2, mod
-            curr_ops_one_hot = torch.nn.functional.one_hot(
-                curr_ops, num_classes=3
-            ).float()
-            operations.append(curr_ops)
-            operations_one_hot.append(curr_ops_one_hot)
-            curr_dirs = torch.tensor(curr_dirs)
-            directions.append(curr_dirs)
+            # dim: ijdiff x imax x beam x dvec
+            c_vec = torch.flip(right_chart_vecs[0:height, jmin:jmax], dims=[0])
+            # dim: ijdiff x imax x lbeam x rbeam x dvec
+            c_vec = c_vec.unsqueeze(dim=-3).expand(-1, -1, beam, -1, -1)
+            # dim: ijdiff x imax x (lbeam * rbeam) x dvec
+            c_vec = c_vec.reshape(ij_diff, imax, beam**2, dvec)
 
-        func_vecs = torch.stack(func_vecs, dim=0)
-        arg_vecs = torch.stack(arg_vecs, dim=0)
-        operations = torch.stack(operations, dim=0).unsqueeze(dim=-1)
-        operations_one_hot = torch.stack(operations_one_hot, dim=0)
-        directions = torch.stack(directions, dim=0).unsqueeze(dim=-1)
-        op_input = torch.cat([func_vecs, arg_vecs], dim=2)
-        op_scores = self.operation_model(op_input)
-#        if self.operation_model_type == "mlp":
-#            op_probs = torch.softmax(op_probs, dim=2)
-        observed_op_scores = op_scores.gather(dim=2, index=operations).squeeze(dim=-1)
-        nt_count = observed_op_scores.shape[1]
-        pred_tree_scores = torch.exp(observed_op_scores.sum(dim=1)/nt_count)
-        valid = torch.Tensor(valid)
+            printDebug("current c_vec:")
+            printDebug(c_vec.reshape(ij_diff, imax, beam, beam, dvec))
 
-        order_probs = self.ordering_model(operations_one_hot)
-        if self.ordering_model_type == "mlp":
-            order_probs = torch.sigmoid(order_probs)
-        
-        # this has the effect of replacing Pr(L | operation) with
-        # Pr(R | direction) at nodes where the functor is on the right
-        observed_order_probs = order_probs + (directions * (-2*order_probs + 1))
-        observed_order_probs = observed_order_probs.squeeze(dim=-1)
-        word_order_probs = observed_order_probs.prod(dim=1) * valid
+            # scores when left child is functor and right is argument
+            # dim: ijdiff x imax x (lbeam * rbeam) x op
+            bc_op_scores = self.operation_model(b_vec, c_vec)
+            # scores when right child is functor and left is argument
+            # dim: ijdiff x imax x (lbeam * rbeam) x op
+            cb_op_scores = self.operation_model(c_vec, b_vec)
+            # dim: ijdiff x imax x (lbeam * rbeam) x (dir * op)
+            new_op_scores = torch.cat([bc_op_scores, cb_op_scores], dim=-1)
+            # all (functor, argument) pairs and operations along the same dimension
+            # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
+            new_op_scores = new_op_scores.reshape(ij_diff, imax, beam**2 * 6)
+            # new_op_scores is the score for the root of the subtree. need to
+            # combine with scores from its two children
 
-        combined_scores = pred_tree_scores * word_order_probs
-        if len(combined_scores) > 10:
-            top = torch.topk(combined_scores, 10, dim=0)
+            printDebug("new_op_scores:")
+            printDebug(new_op_scores.reshape(ij_diff, imax, beam, beam, 6))
+
+            ########
+            # get parent vectors from children, based no what operations happen
+            ########
+            # dim: ijdiff x imax x (lbeam * rbeam) x dvec x op
+            b_vec = b_vec.unsqueeze(-1).repeat(1, 1, 1, 1, 3)
+            c_vec = c_vec.unsqueeze(-1).repeat(1, 1, 1, 1, 3)
+            # dim: op
+            one_hot_op = torch.arange(0, 3)
+            # dim = 1 x 1 x 1 x 1 x op
+            one_hot_op = one_hot_op.reshape(1, 1, 1, 1, 3)
+            # dim: ijdiff x imax x (lbeam * rbeam) x dvec x op
+            bc_vecs = self.compose_vectors(b_vec, c_vec, one_hot_op)
+            # dim: ijdiff x imax x (lbeam * rbeam) x dvec x op
+            cb_vecs = self.compose_vectors(c_vec, b_vec, one_hot_op)
+            # dim: ijdiff x imax x (lbeam * rbeam) x dvec x (dir * op)
+            new_vecs = torch.cat([bc_vecs, cb_vecs], dim=-1)
+            # dim: max x ijdiff x (lbeam * rbeam) x (dir * op) x dvec
+            new_vecs = new_vecs.permute(1, 0, 2, 4, 3)
+            # dim: imax x (ijdiff * lbeam * rbeam * dir * op) x dvec
+            new_vecs = new_vecs.reshape(imax, -1, dvec)
+
+            printDebug("new_vecs:")
+            printDebug(new_vecs.reshape(ij_diff, imax, beam, beam, 6, dvec))
+
+            ########
+            # get combined operation scores from already formed subtrees
+            ########
+            # shape: ijdiff x imax x beam
+            # not sure why clone is necessary, but torch complains otherwise
+            b_op = left_chart_op_scores[0:height, imin:imax].clone()
+            # dim: ijdiff x imax x beam 
+            b_op = torch.log(b_op)
+            b_factor = torch.arange(ij_diff)#.unsqueeze(-1).unsqueeze(-1)
+            # there should be only one possible beam element for the leaf
+            # this hack ensures that other items in the leaf's beam won't be
+            # chosen
+            b_factor[0] = 1
+            b_factor = b_factor.unsqueeze(-1).unsqueeze(-1)
+            # dim: ijdiff x imax x beam 
+            b_op = b_op * b_factor
+
+            printDebug("current unnormalized b_op:")
+            printDebug(b_op.reshape(ij_diff, imax, beam))
+
+            # shape: ijdiff x imax x beam 
+            c_op = torch.flip(right_chart_op_scores[0:height, jmin:jmax], dims=[0])
+            # dim: ijdiff x imax x beam 
+            c_op = torch.log(c_op)
+            c_factor = torch.arange(ij_diff)#.unsqueeze(-1).unsqueeze(-1)
+            # there should be only one possible beam element for the leaf
+            # this hack ensures that other items in the leaf's beam won't be
+            # chosen
+            c_factor[0] = 1
+            c_factor = torch.flip(c_factor, dims=[0])
+            c_factor = c_factor.unsqueeze(-1).unsqueeze(-1)
+            # dim: ijdiff x imax x beam 
+            c_op = c_op * c_factor
+            #c_op = torch.log(c_op)
+
+            printDebug("current unnormalized c_op:")
+            printDebug(c_op.reshape(ij_diff, imax, beam))
+
+            # dim: ijdiff x imax x lbeam x rbeam
+            old_op_scores = b_op[..., None] + c_op[..., None, :]
+            # dim: ijdiff x imax x lbeam x rbeam
+            old_op_scores = old_op_scores.reshape(ij_diff, imax, beam**2)
+            # repeat to make it line up with new_op_scores's different operations and directions
+            # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
+            old_op_scores = old_op_scores.unsqueeze(-1).expand(-1, -1, -1, 6).reshape(ij_diff, imax, -1)
+
+            printDebug("current old_op_scores:")
+            printDebug(old_op_scores.reshape(ij_diff, imax, beam, beam, 6))
+
+            ########
+            ## combine operation scores at the root of the new subtree with
+            ## scores from the already formed subtrees
+            ########
+            # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
+            combined_op_scores = new_op_scores + old_op_scores
+            # ijdiff is the same as the number of nonterminal nodes in the partial tree so far
+            combined_op_scores = torch.exp(combined_op_scores/ij_diff)
+            printDebug("combined_op_scores:")
+            printDebug(combined_op_scores.reshape(ij_diff, imax, beam, beam, 6))
+            # dim: imax x (ijdiff * lbeam * rbeam * dir * op)
+            # the last dim has all the possibilities to find the top k over
+            combined_op_scores = combined_op_scores.permute(1, 0, 2).reshape(imax, -1)
+
+            ########
+            # get probs of ordering the two child subtrees functor left, arg
+            # right or arg left, functor right
+            ########
+            # dim: op
+            one_hot_ordering = nn.functional.one_hot(torch.arange(3)).float()
+            # dim: op
+            l_ord_probs = torch.sigmoid(self.ordering_model(one_hot_ordering)).squeeze(dim=1)
+            # dim: op
+            r_ord_probs = 1 - l_ord_probs
+            # dim: (dir * op)
+            new_ord_probs = torch.cat([l_ord_probs, r_ord_probs], dim=0)
+            # dim: ijdiff x imax x (lbeam * rbeam) x (dir * op)
+            new_ord_probs = new_ord_probs.unsqueeze(0).unsqueeze(0).unsqueeze(0).expand(ij_diff, imax, beam**2, -1)
+            # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
+            new_ord_probs = new_ord_probs.reshape(ij_diff, imax, -1)
+            printDebug("new_ord_probs:")
+            printDebug(new_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
+
+
+            ########
+            # get ordering probabilities from already formed subtrees
+            ########
+            # dim: ijdiff x imax x beam 
+            # not sure why clone is necessary, but torch complains otherwise
+            b_ord = left_chart_ord_probs[0:height, imin:imax].clone()
+            # dim: ijdiff x imax x beam 
+            c_ord = torch.flip(right_chart_ord_probs[0:height, jmin:jmax], dims=[0])
+            # dim: ijdiff x imax x beam x beam
+            old_ord_probs = b_ord[..., None] * c_ord[..., None, :]
+            # dim: ijdiff x imax x (lbeam * rbeam)
+            old_ord_probs = old_ord_probs.reshape(ij_diff, imax, beam**2)
+            # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
+            old_ord_probs = old_ord_probs.unsqueeze(-1).expand(-1, -1, -1, 6).reshape(ij_diff, imax, -1)
+            printDebug("old_ord_probs:")
+            printDebug(old_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
+
+            ########
+            # combine ordinerg probs at the root of the new subtree with
+            # probs from the already formed subtrees
+            ########
+            combined_ord_probs = new_ord_probs * old_ord_probs
+            printDebug("combined_ord_probs:")
+            printDebug(combined_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
+            # dim: imax x (ijdiff * lbeam * rbeam * dir * op)
+            combined_ord_probs = combined_ord_probs.permute(1, 0, 2).reshape(imax, -1)
+
+            ########
+            # combine operation and ordering scores, and select top k items
+            # for next step's beam
+            ########
+            # dim: imax x (ijdiff * lbeam * rbeam * dir * op)
+            combined_full_scores = combined_op_scores * combined_ord_probs
+            # dim: imax x beam
+            top_k = torch.topk(combined_full_scores, k=beam, dim=-1)
+            top_ixs = top_k.indices
+
+            if return_backpointers:
+                top_ops = top_ixs % 3
+                printDebug("top_ops:")
+                printDebug(top_ops)
+                top = top_ixs // 3
+                top_dirs = top % 2
+                printDebug("top_dirs:")
+                printDebug(top_dirs)
+                top = top // 2
+                top_rbeam_ix = top % beam
+                printDebug("top_rbeam_ix:")
+                printDebug(top_rbeam_ix)
+                top = top // beam
+                top_lbeam_ix = top % beam
+                printDebug("top_lbeam_ix:")
+                printDebug(top_lbeam_ix)
+                top_ijdiff = (top // beam)
+                printDebug("top_ijdiff:")
+                printDebug(top_ijdiff)
+                # dim: imax x beam x 5
+                bp = torch.stack([top_ijdiff, top_lbeam_ix, top_rbeam_ix, top_dirs, top_ops], dim=2)
+                backpointers[ij_diff,imin:imax] = bp
+
+            # dim: imax x beam
+            selected_op_scores = combined_op_scores.gather(dim=-1, index=top_ixs)
+            left_chart_op_scores[height, imin:imax] = selected_op_scores
+            right_chart_op_scores[height, jmin:jmax] = selected_op_scores
+
+            # dim: imax x beam
+            selected_ord_probs = combined_ord_probs.gather(dim=-1, index=top_ixs)
+            left_chart_ord_probs[height, imin:imax] = selected_ord_probs
+            right_chart_ord_probs[height, jmin:jmax] = selected_ord_probs
+
+            # dim: imax x beam x dvec
+            top_ixs_vec = top_ixs.unsqueeze(dim=-1).expand(-1, -1, dvec)
+            # dim: imax x beam x dvec
+            selected_vecs = new_vecs.gather(dim=-2, index=top_ixs_vec)
+            left_chart_vecs[height, imin:imax] = selected_vecs
+            right_chart_vecs[height, jmin:jmax] = selected_vecs
+
+#        printDebug("left_chart_op_scores:")
+#        printDebug(left_chart_op_scores)
+#        printDebug("left_chart_ord_probs:")
+#        printDebug(left_chart_ord_probs)
+
+        top_node_op_scores = left_chart_op_scores[sent_len-1, 0]
+        top_node_ord_probs = left_chart_ord_probs[sent_len-1, 0]
+        top_node_scores = top_node_op_scores * top_node_ord_probs
+        loss = -1 * torch.sum(top_node_scores, dim=0)
+        if return_backpointers:
+            return loss, top_node_scores, backpointers
         else:
-            top = torch.sort(combined_scores, descending=True)
-        loss = -1 * torch.log(combined_scores.sum())
-        return loss, top
+            return loss, top_node_scores
     

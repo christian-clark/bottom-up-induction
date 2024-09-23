@@ -1,6 +1,7 @@
 import csv, sys, torch
 from configparser import ConfigParser
 from copy import deepcopy
+from torch import nn
 from itertools import permutations
 
 from inducer import Inducer
@@ -95,8 +96,9 @@ def get_corpus_and_embeddings(config):
     if "fixed_vectors" in config:
         for row in csv.reader(open(config["fixed_vectors"])):
             w = row[0]
+            # ignore lines starting with #
             # ignore fixed vectors for words if they aren't in the corpus
-            if w not in word2ix:
+            if w.startswith("#") or w not in word2ix:
                 continue
             ix = word2ix[w]
             learn_vectors[ix] = 0
@@ -120,18 +122,68 @@ def get_cooccurrences(config):
             scores = [float(s) for s in row]
             op_scores.append(scores)
         cooc.append(op_scores)
+    # shape after permuute: pred x pred x op
     cooc = torch.Tensor(cooc).permute((1, 2, 0))
-    cooc = torch.softmax(cooc, dim=2)
+    #cooc = torch.softmax(cooc, dim=2)
     return cooc
+
+
+def tree_strings_from_backpointers(backpointers):
+    strings = list()
+    sent_len = backpointers.shape[0]
+    for bp_info in backpointers[sent_len-1,0]:
+        s = _construct_tree_string(backpointers, bp_info, 0, sent_len-1)
+        strings.append(s)
+    return strings
+
+
+def _construct_tree_string(backpointers, bp_info, start, end):
+    ijdiff = bp_info[0].item() 
+    left_beam_ix = bp_info[1].item()
+    right_beam_ix = bp_info[2].item()
+    dir = bp_info[3].item()
+    op = bp_info[4].item()
+    # backpointer items are set as -1 for leaves
+    if ijdiff == -1:
+        return str(start) 
+    else:
+        # left child spans start to start+split, inclusive
+        left_start = start
+        left_delta = ijdiff
+        left_end = start + ijdiff
+        left_bp_info = backpointers[left_delta,left_start,left_beam_ix]
+        left_string = _construct_tree_string(
+            backpointers, left_bp_info, left_start, left_end
+        )
+
+        right_start = start + ijdiff + 1
+        right_delta = end - start - ijdiff - 1
+        right_end = end
+        right_bp_info = backpointers[right_delta,right_start,right_beam_ix]
+        right_string = _construct_tree_string(
+            backpointers, right_bp_info, right_start, right_end
+        )
+
+        # functor is on left
+        if op == 0:
+            ostr = "A1"
+        elif op == 1:
+            ostr = "A2"
+        else:
+            assert op == 2
+            ostr = "M"
+        if dir == 0:
+            return '(' + ' ' + left_string + ' ' + right_string + ' ' + ')' + ostr
+        # functor is on right
+        else:
+            assert dir == 1
+            return '(' + ' ' + right_string + ' ' + left_string + ' ' + ')' + ostr
 
 
 def train_inducer(config):
     # dim: sents x words x d
     # d is the dimension of the word vectors
     corpus, fixed_vectors, learn_vectors = get_corpus_and_embeddings(config)
-    print(corpus)
-    print(fixed_vectors)
-    print(learn_vectors)
     cooccurrences = get_cooccurrences(config)
     inducer = Inducer(config, learn_vectors, fixed_vectors, cooccurrences)
     optimizer = torch.optim.Adam(inducer.parameters())
@@ -141,35 +193,43 @@ def train_inducer(config):
     torch.set_printoptions(linewidth=200, precision=2)
     while epoch < config.getint("max_epoch"):
         optimizer.zero_grad()
-        if epoch % config.getint("epoch_print_freq") == 0: v = True
-        else: v = False
-        #loss, combined_probs = inducer(x, verbose=v)
         per_sent_loss = list()
-        per_sent_top = list()
-        for sent in corpus:
-            sent_loss, top = inducer(sent, verbose=v)
-            per_sent_loss.append(sent_loss)
-            per_sent_top.append(top)
-        loss = sum(per_sent_loss)
-        loss.backward()
-        optimizer.step()
+        # TODO batching
         if epoch % config.getint("epoch_print_freq") == 0:
             print("\n==== Epoch {} ====".format(epoch))
-            print("loss:", loss)
+            print_results = True
+        else:
+            print_results = False
+
+        for sent_ix, sent in enumerate(corpus):
+            if print_results:
+                sent_loss, tree_scores, backpointers = inducer(sent, return_backpointers=True)
+                # TODO print trees based on backpointers
+                trees = tree_strings_from_backpointers(backpointers)
+                print("\n\t== Sentence {} ==".format(sent_ix))
+                for ix, t in enumerate(trees):
+                    score = tree_scores[ix].item()
+                    print("\t" + t + "\tScore: {}".format(round(score, 4)))
+            else:
+                sent_loss, _ = inducer(sent)
+            per_sent_loss.append(sent_loss)
+        loss = sum(per_sent_loss)
+        if print_results:
             learned_emb_softmax = torch.softmax(inducer.emb.weight, dim=1)
             combined_emb = \
                 learned_emb_softmax*inducer.learn_vectors.unsqueeze(dim=1) \
                     + inducer.fixed_vectors
-            print("embeddings:")
+            print("\nembeddings:")
             print(combined_emb)
-            for i, top in enumerate(per_sent_top):
-                print("Top trees for sentence {}:".format(i+1))
-                indices = top.indices
-                values = top.values
-                for j, ix in enumerate(indices[:5]):
-                    print("\t[{}] {}".format(j+1, i2t.get_tree(ix, len(corpus[i]))))
-                    print("\t\tScore =", round(values[j].item(), 4))
+            ord_model = inducer.ordering_model
+            ops = nn.functional.one_hot(torch.arange(3)).float()
+            ord_probs = torch.sigmoid(ord_model(ops))
+            print("\nordering probs:")
+            print(ord_probs.reshape(-1))
+            print("\nloss:", loss)
             loss_tracking.append(loss)
+        loss.backward()
+        optimizer.step()
         epoch += 1
     
     loss_tracking = torch.stack(loss_tracking, dim=0)
