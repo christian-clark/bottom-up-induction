@@ -2,6 +2,11 @@ import torch
 from torch import nn
 
 QUASI_INF = 1e9
+DEBUG = False
+
+def printDebug(*args, **kwargs):
+    if DEBUG:
+        print(*args, **kwargs)
 
 # words:
 # 0: happy
@@ -51,8 +56,10 @@ class CoocOpModel(nn.Module):
         arg_vecs = arg_vecs.unsqueeze(-2)
         # dim: ... x ops
         cooc = (cooc * arg_vecs).sum(dim=-1)
-        #print("op_mask:")
-        #print(op_mask)
+        printDebug("op_mask:")
+        printDebug(op_mask)
+        printDebug("combined:")
+        printDebug(cooc + op_mask)
         return cooc + op_mask
 
 

@@ -93,7 +93,7 @@ def get_corpus_and_embeddings(config):
     vdim = int(config["vector_dim"])
     fixed_vectors = torch.zeros(vocab_size, vdim)
     learn_vectors = torch.ones(vocab_size)
-    if "fixed_vectors" in config:
+    if "fixed_vectors" in config and config.getboolean("fixed_vectors"):
         for row in csv.reader(open(config["fixed_vectors"])):
             w = row[0]
             # ignore lines starting with #

@@ -77,15 +77,15 @@ class Inducer(nn.Module):
             # dim: ... x 1 x n
             new_arg1_flag = is_arg1 | func_arg1_flag
             # dim: ... x 1 x n
-            func_arg2_flag = func[..., -1:0, :].long()
+            func_arg2_flag = func[..., -1:, :].long()
             # dim: ... x 1 x n
             new_arg2_flag = is_arg2 | func_arg2_flag
 
-            printDebug("func shape:", func.shape)
-            printDebug("new_arg1_flag shape:", new_arg1_flag.shape)
+            printDebug("new_arg1_flag:", new_arg1_flag)
+            printDebug("new_arg2_flag:", new_arg2_flag)
 
             func[..., -2:-1, :] = new_arg1_flag
-            func[..., -1:0, :] = new_arg2_flag
+            func[..., -1:, :] = new_arg2_flag
 
             # check that all ops are acceptable values
             assert all((prop_arg | prop_func).reshape(-1)), "all operations must be 0, 1, or 2"
