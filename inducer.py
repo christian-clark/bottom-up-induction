@@ -8,7 +8,7 @@ from tree import enumerate_trees
 
 MAX_ROLE = 2
 TINY = 1e-9
-DEBUG = False
+DEBUG = True
 
 def printDebug(*args, **kwargs):
     if DEBUG:
@@ -19,6 +19,9 @@ class Inducer(nn.Module):
         super(Inducer, self).__init__()
         self.learn_vectors = learn_vectors
         self.fixed_vectors = fixed_vectors
+        self.normalize_op_scores = config.getboolean("normalize_op_scores")
+        if self.normalize_op_scores:
+            self.pred_tree_sample_size = config.getint("pred_tree_sample_size")
         self.cooccurrences = cooccurrences
         self.vocab_size = fixed_vectors.shape[0]
         self.dvec = fixed_vectors.shape[1]
@@ -48,7 +51,7 @@ class Inducer(nn.Module):
         if self.ordering_model_type == "mlp":
             self.ordering_model = nn.Linear(3, 1)
         else:
-            self.ordering_model = hacky_ordering_model
+            raise NotImplementedError()
 
     def vectorize_sentence(self, ids):
         learned_vec = torch.softmax(self.emb(ids), dim=1)
@@ -57,6 +60,42 @@ class Inducer(nn.Module):
         fixed_vec = self.fixed_vectors.gather(dim=0, index=repeated_ids)
         combined_vec = learned_vec*learn + fixed_vec
         return combined_vec
+
+    def get_op_normalization_constant(self, x):
+        # dim of x: sent_len x dvec
+        # k is number of samples to take
+        k = self.pred_tree_sample_size
+        sent_len = x.shape[0]
+        dvec = x.shape[1]
+        # dim: k x sent_len x dvec
+        vecs = x.unsqueeze(0).repeat(k, 1, 1)
+        printDebug("vecs shape:", vecs.shape)
+        printDebug("vecs:", vecs)
+        available_ixs = torch.ones(k, sent_len)
+        scores = torch.zeros(k)
+        printDebug("available_ixs shape", available_ixs.shape)
+        printDebug("available ixs:", available_ixs)
+        for _ in range(sent_len-1):
+            # dim: k
+            ops = torch.randint(3, (k,))
+            printDebug("ops:", ops)
+            # dim: k x 2
+            ix_func_arg = torch.multinomial(available_ixs, 2)
+            # dim: k x 2 x dvec
+            ix_func_arg = ix_func_arg.unsqueeze(-1).repeat(1, 1, dvec)
+            # dim: k x 2 x dvec
+            vecs_func_arg = vecs.gather(dim=1, index=ix_func_arg)
+            # dim: k x dvec
+            vecs_func = vecs_func_arg[:, 0, :]
+            # dim: k x dvec
+            vecs_arg = vecs_func_arg[:, 1, :]
+            printDebug("ix_func_arg:", ix_func_arg)
+            printDebug("vecs_func_arg:", vecs_func_arg)
+            printDebug("vecs_func:", vecs_func)
+            printDebug("vecs_arg:", vecs_arg)
+            op_scores = self.operation_model.forward_no_flags(vecs_func, vecs_arg)
+            printDebug("op_scores", op_scores)
+        # TODO compose vectors, gather op scores, get final scores from summation
     
     def compose_vectors(self, func, arg, op):
         # func dim: ... x dvec x n
@@ -81,8 +120,8 @@ class Inducer(nn.Module):
             # dim: ... x 1 x n
             new_arg2_flag = is_arg2 | func_arg2_flag
 
-            printDebug("new_arg1_flag:", new_arg1_flag)
-            printDebug("new_arg2_flag:", new_arg2_flag)
+            #printDebug("new_arg1_flag:", new_arg1_flag)
+            #printDebug("new_arg2_flag:", new_arg2_flag)
 
             func[..., -2:-1, :] = new_arg1_flag
             func[..., -1:, :] = new_arg2_flag
@@ -127,12 +166,14 @@ class Inducer(nn.Module):
             backpointers = torch.full((sent_len, sent_len, beam, 5), fill_value=-1)
             #backpointers = [[[None for i in range(beam)] for j in range(sent_len)] for k in range(sent_len)]
 
+        if self.normalize_op_scores:
+            norm_constant = self.get_op_normalization_constant(x)
+
         right_chart_vecs = left_chart_vecs
         right_chart_op_scores = left_chart_op_scores
         right_chart_ord_probs = left_chart_ord_probs
         for ij_diff in range(1, sent_len):
             printDebug("== ijdiff: {} ==".format(ij_diff))
-        #for ij_diff in range(1, 2):
             imin = 0
             imax = sent_len - ij_diff
             jmin = ij_diff
@@ -150,8 +191,8 @@ class Inducer(nn.Module):
             # dim: ijdiff x imax x (lbeam * rbeam) x dvec
             b_vec = b_vec.reshape(ij_diff, imax, beam**2, dvec)
 
-            printDebug("current b_vec:")
-            printDebug(b_vec.reshape(ij_diff, imax, beam, beam, dvec))
+            #printDebug("current b_vec:")
+            #printDebug(b_vec.reshape(ij_diff, imax, beam, beam, dvec))
 
             # dim: ijdiff x imax x beam x dvec
             c_vec = torch.flip(right_chart_vecs[0:height, jmin:jmax], dims=[0])
@@ -160,8 +201,8 @@ class Inducer(nn.Module):
             # dim: ijdiff x imax x (lbeam * rbeam) x dvec
             c_vec = c_vec.reshape(ij_diff, imax, beam**2, dvec)
 
-            printDebug("current c_vec:")
-            printDebug(c_vec.reshape(ij_diff, imax, beam, beam, dvec))
+            #printDebug("current c_vec:")
+            #printDebug(c_vec.reshape(ij_diff, imax, beam, beam, dvec))
 
             # scores when left child is functor and right is argument
             # dim: ijdiff x imax x (lbeam * rbeam) x op
@@ -177,8 +218,8 @@ class Inducer(nn.Module):
             # new_op_scores is the score for the root of the subtree. need to
             # combine with scores from its two children
 
-            printDebug("new_op_scores:")
-            printDebug(new_op_scores.reshape(ij_diff, imax, beam, beam, 6))
+            #printDebug("new_op_scores:")
+            #printDebug(new_op_scores.reshape(ij_diff, imax, beam, beam, 6))
 
             ########
             # get parent vectors from children, based no what operations happen
@@ -201,8 +242,8 @@ class Inducer(nn.Module):
             # dim: imax x (ijdiff * lbeam * rbeam * dir * op) x dvec
             new_vecs = new_vecs.reshape(imax, -1, dvec)
 
-            printDebug("new_vecs:")
-            printDebug(new_vecs.reshape(ij_diff, imax, beam, beam, 6, dvec))
+            #printDebug("new_vecs:")
+            #printDebug(new_vecs.reshape(ij_diff, imax, beam, beam, 6, dvec))
 
             ########
             # get combined operation scores from already formed subtrees
@@ -221,8 +262,8 @@ class Inducer(nn.Module):
             # dim: ijdiff x imax x beam 
             b_op = b_op * b_factor
 
-            printDebug("current unnormalized b_op:")
-            printDebug(b_op.reshape(ij_diff, imax, beam))
+            #printDebug("current unnormalized b_op:")
+            #printDebug(b_op.reshape(ij_diff, imax, beam))
 
             # shape: ijdiff x imax x beam 
             c_op = torch.flip(right_chart_op_scores[0:height, jmin:jmax], dims=[0])
@@ -239,8 +280,8 @@ class Inducer(nn.Module):
             c_op = c_op * c_factor
             #c_op = torch.log(c_op)
 
-            printDebug("current unnormalized c_op:")
-            printDebug(c_op.reshape(ij_diff, imax, beam))
+            #printDebug("current unnormalized c_op:")
+            #printDebug(c_op.reshape(ij_diff, imax, beam))
 
             # dim: ijdiff x imax x lbeam x rbeam
             old_op_scores = b_op[..., None] + c_op[..., None, :]
@@ -250,8 +291,8 @@ class Inducer(nn.Module):
             # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
             old_op_scores = old_op_scores.unsqueeze(-1).expand(-1, -1, -1, 6).reshape(ij_diff, imax, -1)
 
-            printDebug("current old_op_scores:")
-            printDebug(old_op_scores.reshape(ij_diff, imax, beam, beam, 6))
+            #printDebug("current old_op_scores:")
+            #printDebug(old_op_scores.reshape(ij_diff, imax, beam, beam, 6))
 
             ########
             ## combine operation scores at the root of the new subtree with
@@ -261,8 +302,8 @@ class Inducer(nn.Module):
             combined_op_scores = new_op_scores + old_op_scores
             # ijdiff is the same as the number of nonterminal nodes in the partial tree so far
             combined_op_scores = torch.exp(combined_op_scores/ij_diff)
-            printDebug("combined_op_scores:")
-            printDebug(combined_op_scores.reshape(ij_diff, imax, beam, beam, 6))
+            #printDebug("combined_op_scores:")
+            #printDebug(combined_op_scores.reshape(ij_diff, imax, beam, beam, 6))
             # dim: imax x (ijdiff * lbeam * rbeam * dir * op)
             # the last dim has all the possibilities to find the top k over
             combined_op_scores = combined_op_scores.permute(1, 0, 2).reshape(imax, -1)
@@ -283,8 +324,8 @@ class Inducer(nn.Module):
             new_ord_probs = new_ord_probs.unsqueeze(0).unsqueeze(0).unsqueeze(0).expand(ij_diff, imax, beam**2, -1)
             # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
             new_ord_probs = new_ord_probs.reshape(ij_diff, imax, -1)
-            printDebug("new_ord_probs:")
-            printDebug(new_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
+            #printDebug("new_ord_probs:")
+            #printDebug(new_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
 
 
             ########
@@ -301,16 +342,16 @@ class Inducer(nn.Module):
             old_ord_probs = old_ord_probs.reshape(ij_diff, imax, beam**2)
             # dim: ijdiff x imax x (lbeam * rbeam * dir * op)
             old_ord_probs = old_ord_probs.unsqueeze(-1).expand(-1, -1, -1, 6).reshape(ij_diff, imax, -1)
-            printDebug("old_ord_probs:")
-            printDebug(old_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
+            #printDebug("old_ord_probs:")
+            #printDebug(old_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
 
             ########
             # combine ordinerg probs at the root of the new subtree with
             # probs from the already formed subtrees
             ########
             combined_ord_probs = new_ord_probs * old_ord_probs
-            printDebug("combined_ord_probs:")
-            printDebug(combined_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
+            #printDebug("combined_ord_probs:")
+            #printDebug(combined_ord_probs.reshape(ij_diff, imax, beam, beam, 6))
             # dim: imax x (ijdiff * lbeam * rbeam * dir * op)
             combined_ord_probs = combined_ord_probs.permute(1, 0, 2).reshape(imax, -1)
 
@@ -326,23 +367,23 @@ class Inducer(nn.Module):
 
             if return_backpointers:
                 top_ops = top_ixs % 3
-                printDebug("top_ops:")
-                printDebug(top_ops)
+                #printDebug("top_ops:")
+                #printDebug(top_ops)
                 top = top_ixs // 3
                 top_dirs = top % 2
-                printDebug("top_dirs:")
-                printDebug(top_dirs)
+                #printDebug("top_dirs:")
+                #printDebug(top_dirs)
                 top = top // 2
                 top_rbeam_ix = top % beam
-                printDebug("top_rbeam_ix:")
-                printDebug(top_rbeam_ix)
+                #printDebug("top_rbeam_ix:")
+                #printDebug(top_rbeam_ix)
                 top = top // beam
                 top_lbeam_ix = top % beam
-                printDebug("top_lbeam_ix:")
-                printDebug(top_lbeam_ix)
+                #printDebug("top_lbeam_ix:")
+                #printDebug(top_lbeam_ix)
                 top_ijdiff = (top // beam)
-                printDebug("top_ijdiff:")
-                printDebug(top_ijdiff)
+                #printDebug("top_ijdiff:")
+                #printDebug(top_ijdiff)
                 # dim: imax x beam x 5
                 bp = torch.stack([top_ijdiff, top_lbeam_ix, top_rbeam_ix, top_dirs, top_ops], dim=2)
                 backpointers[ij_diff,imin:imax] = bp

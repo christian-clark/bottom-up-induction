@@ -64,19 +64,23 @@ class CoocOpModel(nn.Module):
         printDebug(cooc + op_mask)
         return cooc + op_mask
 
-
-#        func = func_and_arg[..., :self.dvec]
-#        arg = func_and_arg[..., self.dvec:]
-#        # NOTE: the einsums seem to be very slow
-#        # NOTE: for some reason, this operation model seems to cause much
-#        # smaller gradient updates to the word embeddings
-#        # func dim: trees x nts x dvec
-#        # COOC_FIVE_WORD dim: dvec x dvec x ops
-#        # output dim: trees x nts x dvec x ops
-#        # TODO pass cooccurrences in rather than using hard-coded values
-#        cooc = torch.einsum("tnu,uvo->tnvo", func, COOC_FIVE_WORD)
-#        # arg dim: trees x nts x dvec
-#        # cooc dim: trees x nts x dvec x ops
-#        # output dim: trees x nts x ops
-#        cooc = torch.einsum("tnv,tnvo->tno", arg, cooc)
-#        return cooc
+    def forward_no_flags(self, func, arg):
+        # dim: ... x dvec
+        func_vecs = func
+        # dim: ... x 1 x dvec x 1
+        func_vecs = func_vecs.unsqueeze(-2).unsqueeze(-1)
+        printDebug("func_vecs shape:", func_vecs.shape)
+        # shape of self.cooccurrences: dvec x dvec x ops
+        # dim: ops x dvec x dvec
+        cooc = self.cooccurrences.permute(2,0,1)
+        printDebug("cooc shape:", cooc.shape)
+        # dim: ... x ops x dvec
+        cooc = (cooc * func_vecs).sum(dim=-2)
+        # dim: ... x dvec
+        # flags on argument vector don't matter
+        arg_vecs = arg
+        # dim: ... x 1 x dvec
+        arg_vecs = arg_vecs.unsqueeze(-2)
+        # dim: ... x ops
+        cooc = (cooc * arg_vecs).sum(dim=-1)
+        return cooc
