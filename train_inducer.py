@@ -7,7 +7,7 @@ from itertools import permutations
 from inducer import Inducer
 from tree import full_binary_trees
 
-
+DEBUG = False
 DEFAULT_CONFIG = {
     "DEFAULT": {
         "max_epoch": 1000,
@@ -16,6 +16,10 @@ DEFAULT_CONFIG = {
         "ordering_model_type": "mlp"
     }
 }
+
+def printDebug(*args, **kwargs):
+    if DEBUG:
+        print(*args, **kwargs)
 
 
 class IxToTree:
@@ -93,7 +97,7 @@ def get_corpus_and_embeddings(config):
     vdim = int(config["vector_dim"])
     fixed_vectors = torch.zeros(vocab_size, vdim)
     learn_vectors = torch.ones(vocab_size)
-    if "fixed_vectors" in config and config.getboolean("fixed_vectors"):
+    if "fixed_vectors" in config and config["fixed_vectors"] != "None":
         for row in csv.reader(open(config["fixed_vectors"])):
             w = row[0]
             # ignore lines starting with #
@@ -138,9 +142,9 @@ def tree_strings_from_backpointers(backpointers):
 
 
 def _construct_tree_string(backpointers, bp_info, start, end):
-    ijdiff = bp_info[0].item() 
-    left_beam_ix = bp_info[1].item()
-    right_beam_ix = bp_info[2].item()
+    ijdiff = bp_info[0].long().item() 
+    left_beam_ix = bp_info[1].long().item()
+    right_beam_ix = bp_info[2].long().item()
     dir = bp_info[3].item()
     op = bp_info[4].item()
     # backpointer items are set as -1 for leaves
@@ -151,6 +155,10 @@ def _construct_tree_string(backpointers, bp_info, start, end):
         left_start = start
         left_delta = ijdiff
         left_end = start + ijdiff
+        printDebug("left_start type:", type(left_start))
+        printDebug("left_delta type:", type(left_delta))
+        printDebug("left_end type:", type(left_end))
+        printDebug("left_beam_ix type:", type(left_beam_ix))
         left_bp_info = backpointers[left_delta,left_start,left_beam_ix]
         left_string = _construct_tree_string(
             backpointers, left_bp_info, left_start, left_end

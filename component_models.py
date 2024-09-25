@@ -44,9 +44,11 @@ class CoocOpModel(nn.Module):
         func_vecs = func[..., :-2]
         # dim: ... x 1 x dvec x 1
         func_vecs = func_vecs.unsqueeze(-2).unsqueeze(-1)
+        printDebug("func_vecs shape:", func_vecs.shape)
         # shape of self.cooccurrences: dvec x dvec x ops
         # dim: ops x dvec x dvec
         cooc = self.cooccurrences.permute(2,0,1)
+        printDebug("cooc shape:", cooc.shape)
         # dim: ... x ops x dvec
         cooc = (cooc * func_vecs).sum(dim=-2)
         # dim: ... x dvec

@@ -73,11 +73,11 @@ class Inducer(nn.Module):
             prop_arg = is_mod
 
             # dim: ... x 1 x n
-            func_arg1_flag = func[..., -2:-1, :].long()
+            func_arg1_flag = func[..., -2:-1, :].bool()
             # dim: ... x 1 x n
             new_arg1_flag = is_arg1 | func_arg1_flag
             # dim: ... x 1 x n
-            func_arg2_flag = func[..., -1:, :].long()
+            func_arg2_flag = func[..., -1:, :].bool()
             # dim: ... x 1 x n
             new_arg2_flag = is_arg2 | func_arg2_flag
 
