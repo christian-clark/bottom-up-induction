@@ -64,6 +64,7 @@ class CoocOpModel(nn.Module):
         printDebug(cooc + op_mask)
         return cooc + op_mask
 
+
     def forward_no_flags(self, func, arg):
         # dim: ... x dvec
         func_vecs = func

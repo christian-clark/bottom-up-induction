@@ -7,7 +7,7 @@ from itertools import permutations
 from inducer import Inducer
 from tree import full_binary_trees
 
-DEBUG = False
+DEBUG = True
 DEFAULT_CONFIG = {
     "DEFAULT": {
         "max_epoch": 1000,
@@ -155,10 +155,6 @@ def _construct_tree_string(backpointers, bp_info, start, end):
         left_start = start
         left_delta = ijdiff
         left_end = start + ijdiff
-        printDebug("left_start type:", type(left_start))
-        printDebug("left_delta type:", type(left_delta))
-        printDebug("left_end type:", type(left_end))
-        printDebug("left_beam_ix type:", type(left_beam_ix))
         left_bp_info = backpointers[left_delta,left_start,left_beam_ix]
         left_string = _construct_tree_string(
             backpointers, left_bp_info, left_start, left_end

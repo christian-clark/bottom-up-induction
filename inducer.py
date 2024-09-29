@@ -1,4 +1,4 @@
-import torch
+import math, torch
 from copy import deepcopy
 from itertools import permutations as perm
 from torch import nn
@@ -9,10 +9,34 @@ from tree import enumerate_trees
 MAX_ROLE = 2
 TINY = 1e-9
 DEBUG = True
+# https://oeis.org/A000108/list
+CATALAN = [
+    1, 1, 2, 5, 14, 42, 132, 429, 1430, 4862, 16796, 58786,
+    208012, 742900, 2674440, 9694845, 35357670, 129644790,
+    477638700, 1767263190, 6564120420, 24466267020,
+    91482563640, 343059613650, 1289904147324,
+    4861946401452, 18367353072152, 69533550916004,
+    263747951750360, 1002242216651368, 3814986502092304
+]
+
 
 def printDebug(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
+
+def logTreeCountUnfiltered(n):
+    """
+    Returns the natural log of the number of possible predicate-argument trees
+    of size n, without filtering out trees that contain illegal sequences of
+    operations (e.g. arg1 at both a child node and its ancestor).
+    """
+    if n > len(CATALAN):
+        raise Exception("Catalan number not provided for sentence of length {}".format(n))
+    leaf_orderings = math.factorial(n)
+    trees_structures = CATALAN[n-1]
+    op_assignments = 3**(n-1)
+    return math.log(leaf_orderings) + math.log(trees_structures) + math.log(op_assignments)
+
 
 class Inducer(nn.Module):
     def __init__(self, config, learn_vectors, fixed_vectors, cooccurrences=None):
@@ -67,36 +91,101 @@ class Inducer(nn.Module):
         k = self.pred_tree_sample_size
         sent_len = x.shape[0]
         dvec = x.shape[1]
-        # dim: k x sent_len x dvec
+        # dvec with 2 flags
+        dvecf = dvec + 2
+        # arg1 and arg2 flags for detecting illegal trees
+        flags = torch.zeros((k, sent_len, 2))
+        # dim: k x sent_len x dvecf
         vecs = x.unsqueeze(0).repeat(k, 1, 1)
-        printDebug("vecs shape:", vecs.shape)
-        printDebug("vecs:", vecs)
+        # dim: k x sent_len x dvecf
+        vecs = torch.cat([vecs, flags], dim=2)
+        #printDebug("\n===============================")
+        #printDebug("vecs:", vecs)
+        # dim: k x sent_len
         available_ixs = torch.ones(k, sent_len)
+        #printDebug("available:", available_ixs)
+        # marks whether each sampled tree contains any illegal
+        # operations, e.g. an arg2 attachment on a parent node
+        # of another arg2 attachment
+        legal = torch.ones(k, dtype=torch.bool)
+        #printDebug("legal:", legal)
+        # dim: k x 1
+        available_mask = torch.zeros(k, 1)
         scores = torch.zeros(k)
-        printDebug("available_ixs shape", available_ixs.shape)
-        printDebug("available ixs:", available_ixs)
-        for _ in range(sent_len-1):
+        for i in range(sent_len-1):
+            #printDebug("=== i = {} ===".format(i))
             # dim: k
             ops = torch.randint(3, (k,))
-            printDebug("ops:", ops)
             # dim: k x 2
             ix_func_arg = torch.multinomial(available_ixs, 2)
-            # dim: k x 2 x dvec
-            ix_func_arg = ix_func_arg.unsqueeze(-1).repeat(1, 1, dvec)
-            # dim: k x 2 x dvec
+            #printDebug("ix_func_arg:", ix_func_arg)
+            #printDebug("ops:", ops)
+            # dim: k x 1
+            ix_func = ix_func_arg[:, 0].unsqueeze(dim=-1)
+            # dim: k x 1
+            ix_arg = ix_func_arg[:, 1].unsqueeze(dim=-1)
+            # block the argument word from being selected again
+            available_ixs.scatter_(dim=1, index=ix_arg, src=available_mask)
+            # dim: k x 2 x dvecf
+            ix_func_arg = ix_func_arg.unsqueeze(-1).repeat(1, 1, dvecf)
+            # dim: k x 2 x dvecf
             vecs_func_arg = vecs.gather(dim=1, index=ix_func_arg)
-            # dim: k x dvec
+            # dim: k x dvecf
             vecs_func = vecs_func_arg[:, 0, :]
-            # dim: k x dvec
+            vecs_func_no_flags = vecs_func[:, :-2]
+            # dim: k x dvecf
             vecs_arg = vecs_func_arg[:, 1, :]
-            printDebug("ix_func_arg:", ix_func_arg)
-            printDebug("vecs_func_arg:", vecs_func_arg)
-            printDebug("vecs_func:", vecs_func)
-            printDebug("vecs_arg:", vecs_arg)
-            op_scores = self.operation_model.forward_no_flags(vecs_func, vecs_arg)
-            printDebug("op_scores", op_scores)
-        # TODO compose vectors, gather op scores, get final scores from summation
+            # dim: k x dvec
+            vecs_arg_no_flags = vecs_arg[:, :-2]
+            #printDebug("vecs_args_no_flags shape:", vecs_arg_no_flags.shape)
+            # dim: k x 3
+            all_op_scores = self.operation_model.forward_no_flags(vecs_func_no_flags, vecs_arg_no_flags)
+            # dim : k x 1
+            op_ixs = ops.unsqueeze(-1)
+            # dim: k
+            op_scores = all_op_scores.gather(dim=1, index=op_ixs).squeeze(-1)
+            scores += op_scores
+            # dim: dvecf x k
+            vecs_func = vecs_func.permute(1, 0)
+            # dim: dvecf x k
+            vecs_arg = vecs_arg.permute(1, 0)
+            # dim: 1 x k
+            ops = ops.unsqueeze(0)
+            # dim: dvec x k
+            # TODO use normal compose_vectors function, with second return
+            # value marking whether composition was illegal
+            # if it was illegal, illegal[k] should be updated to 1
+            #vecs_composed = self.compose_vectors_no_flags(
+            #    vecs_func, vecs_arg, ops
+            #)
+            # dim of vecs_composed: dvecf x k
+            # dim of illegal_comp: 1 x k
+            vecs_composed, legal_comp = self.compose_vectors(
+                vecs_func, vecs_arg, ops
+            )
+            # dim: k
+            legal_comp = legal_comp.squeeze(0)
+            legal = legal & legal_comp
+            # dim: k x 1 x dvec
+            vecs_composed = vecs_composed.t().unsqueeze(-2)
+            # dim: k x 1 x dvec
+            ix_func = ix_func_arg[:, 0:1, :]
+            # dim: k x sent_len x dvec
+            # replace functor vec with composed vec
+            vecs.scatter_(dim=1, index=ix_func, src=vecs_composed)
+            #printDebug("available:", available_ixs)
+            #printDebug("vecs:", vecs)
+            #printDebug("legal:", legal)
+        #printDebug("scores:", scores)
+        # dim: k
+        legal_scores = scores * legal
+        # dim: k
+        sample_softmax_denom = torch.logsumexp(legal_scores, dim=0).item()
+        all_tree_count = logTreeCountUnfiltered(sent_len)
+        return sample_softmax_denom + all_tree_count - math.log(k)
     
+    # TODO second return value marking whether composition was illegal
+    # (e.g. arg2 on a functor that already did arg2)
     def compose_vectors(self, func, arg, op):
         # func dim: ... x dvec x n
         # arg dim: ... x dvec x n
@@ -119,6 +208,12 @@ class Inducer(nn.Module):
             func_arg2_flag = func[..., -1:, :].bool()
             # dim: ... x 1 x n
             new_arg2_flag = is_arg2 | func_arg2_flag
+            # dim: ... x 1 x n
+            bad = (is_arg1 & func_arg1_flag) \
+                | (is_arg2 & func_arg1_flag) \
+                | (is_arg2 & func_arg2_flag)
+            legal = ~bad
+            #printDebug("legal compose:", legal)
 
             #printDebug("new_arg1_flag:", new_arg1_flag)
             #printDebug("new_arg2_flag:", new_arg2_flag)
@@ -128,6 +223,26 @@ class Inducer(nn.Module):
 
             # check that all ops are acceptable values
             assert all((prop_arg | prop_func).reshape(-1)), "all operations must be 0, 1, or 2"
+            output = prop_func * func + prop_arg * arg
+        else:
+            raise NotImplementedError
+        return output, legal
+
+    def compose_vectors_no_flags(self, func, arg, op):
+        # func dim: ... x dvec x n
+        # arg dim: ... x dvec x n
+        # op dim: ... x 1 x n
+        # n is the total number of (func, arg, op) triplets to compose
+        if self.composition_method == "head":
+            is_arg1 = (op == 0)
+            is_arg2 = (op == 1)
+            is_mod = (op == 2)
+            # in arg1 or arg2 attachment, functor propagates
+            prop_func = is_arg1 | is_arg2
+            # in modifier attachment, argument propagates
+            prop_arg = is_mod
+            assert all((prop_arg | prop_func).reshape(-1)), "all operations must be 0, 1, or 2"
+            # dim: ... x dvec x n
             output = prop_func * func + prop_arg * arg
         else:
             raise NotImplementedError
@@ -167,13 +282,14 @@ class Inducer(nn.Module):
             #backpointers = [[[None for i in range(beam)] for j in range(sent_len)] for k in range(sent_len)]
 
         if self.normalize_op_scores:
-            norm_constant = self.get_op_normalization_constant(x)
+            log_denom = self.get_op_normalization_constant(x)
+            print("log_denom:", log_denom)
 
         right_chart_vecs = left_chart_vecs
         right_chart_op_scores = left_chart_op_scores
         right_chart_ord_probs = left_chart_ord_probs
         for ij_diff in range(1, sent_len):
-            printDebug("== ijdiff: {} ==".format(ij_diff))
+            #printDebug("== ijdiff: {} ==".format(ij_diff))
             imin = 0
             imax = sent_len - ij_diff
             jmin = ij_diff
@@ -232,9 +348,9 @@ class Inducer(nn.Module):
             # dim = 1 x 1 x 1 x 1 x op
             one_hot_op = one_hot_op.reshape(1, 1, 1, 1, 3)
             # dim: ijdiff x imax x (lbeam * rbeam) x dvec x op
-            bc_vecs = self.compose_vectors(b_vec, c_vec, one_hot_op)
+            bc_vecs, _ = self.compose_vectors(b_vec, c_vec, one_hot_op)
             # dim: ijdiff x imax x (lbeam * rbeam) x dvec x op
-            cb_vecs = self.compose_vectors(c_vec, b_vec, one_hot_op)
+            cb_vecs, _ = self.compose_vectors(c_vec, b_vec, one_hot_op)
             # dim: ijdiff x imax x (lbeam * rbeam) x dvec x (dir * op)
             new_vecs = torch.cat([bc_vecs, cb_vecs], dim=-1)
             # dim: max x ijdiff x (lbeam * rbeam) x (dir * op) x dvec
@@ -410,6 +526,7 @@ class Inducer(nn.Module):
 #        printDebug("left_chart_ord_probs:")
 #        printDebug(left_chart_ord_probs)
 
+        # TODO log transform loss, including denominator
         top_node_op_scores = left_chart_op_scores[sent_len-1, 0]
         top_node_ord_probs = left_chart_ord_probs[sent_len-1, 0]
         top_node_scores = top_node_op_scores * top_node_ord_probs
