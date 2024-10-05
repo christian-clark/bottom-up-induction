@@ -86,6 +86,11 @@ class Inducer(nn.Module):
         return combined_vec
 
     def get_op_normalization_constant(self, x):
+        """
+        Returns a sample-based estimate of the denominator of the
+        predicate-argument tree probabilities. This estimate is log-
+        transformed since there are lots of trees to sum over
+        """
         # dim of x: sent_len x dvec
         # k is number of samples to take
         k = self.pred_tree_sample_size
@@ -178,11 +183,13 @@ class Inducer(nn.Module):
             #printDebug("legal:", legal)
         #printDebug("scores:", scores)
         # dim: k
-        legal_scores = scores * legal
-        # dim: k
-        sample_softmax_denom = torch.logsumexp(legal_scores, dim=0).item()
-        all_tree_count = logTreeCountUnfiltered(sent_len)
-        return sample_softmax_denom + all_tree_count - math.log(k)
+        log_all_tree_count = logTreeCountUnfiltered(sent_len)
+        log_legal_count = math.log(torch.sum(legal, dim=0).item())
+        log_sample_size = math.log(k)
+        legal_scores = scores[legal]
+        #printDebug("legal_scores shape:", legal_scores.shape)
+        log_sample_total_score = torch.logsumexp(legal_scores, dim=0).item()
+        return log_all_tree_count + log_legal_count - 2*log_sample_size + log_sample_total_score
     
     # TODO second return value marking whether composition was illegal
     # (e.g. arg2 on a functor that already did arg2)
@@ -526,9 +533,12 @@ class Inducer(nn.Module):
 #        printDebug("left_chart_ord_probs:")
 #        printDebug(left_chart_ord_probs)
 
-        # TODO log transform loss, including denominator
+        # dim: beam
         top_node_op_scores = left_chart_op_scores[sent_len-1, 0]
         top_node_ord_probs = left_chart_ord_probs[sent_len-1, 0]
+        # TODO log transform loss, including denominator
+        #if self.normalize_op_scores:
+
         top_node_scores = top_node_op_scores * top_node_ord_probs
         loss = -1 * torch.sum(top_node_scores, dim=0)
         if return_backpointers:
