@@ -19,6 +19,33 @@ CATALAN = [
     263747951750360, 1002242216651368, 3814986502092304
 ]
 
+# first 20 values from count_pred_trees.py
+# note that these values are the number of possible pred trees for some
+# fixed ordering of leaves. To count the total across all leaf orderings,
+# multiply POSSIBLE_TREES[n] by (n+1)!
+POSSIBLE_TREES = [
+    1,
+    3,
+    15,
+    91,
+    612,
+    4389,
+    32890,
+    254475,
+    2017356,
+    16301164,
+    133767543,
+    1111731933,
+    9338434700,
+    79155435870,
+    676196049060,
+    5815796869995,
+    50318860986108,
+    437662920058980,
+    3824609516638444,
+    33563127932394060
+]
+
 
 def printDebug(*args, **kwargs):
     if DEBUG:

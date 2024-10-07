@@ -195,7 +195,13 @@ def train_inducer(config):
     loss_tracking = list()
     i2t = IxToTree()
     torch.set_printoptions(linewidth=200, precision=2)
+    max_sent_len = max(len(sent) for sent in corpus)
+    printDebug("max sent len:", max_sent_len)
     while epoch < config.getint("max_epoch"):
+        # TODO generate sampled tree structures of sentences of length up
+        # to n_max
+        # dim: (n_max-1) x 3 x (n_max-2) x k
+        # TODO get sampling k
         optimizer.zero_grad()
         per_sent_loss = list()
         # TODO batching
